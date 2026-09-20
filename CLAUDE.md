@@ -2,7 +2,9 @@
 
 A browser GTA-style game set in real Luxembourg City, built from OpenStreetMap data. Drivable car, ambient traffic and pedestrians, day/night, weather, police/wanted system, terrain, and a lot of city dressing. Three.js renderer, Vite dev server, no backend.
 
-This file is the memory of how the project was built. It was made in one overnight sprint by a **team of cooperating Claude Code sessions** coordinating through a plain-text telegraph. If you are resuming the project, read this whole file first — especially "Restoring the team" at the end.
+This file is the orientation for anybody working on the code: the decisions that are not obvious from reading it, the invariants that break everything when they are broken, and the traps that have already cost somebody a night. Read it before changing anything under `src/`.
+
+`README.md` is for playing the game. `INTERFACES.md` is the contract between the rendering half and the simulation half, and is the thing to read before touching either.
 
 ## Running it
 
@@ -46,42 +48,27 @@ All game data is committed under `public/data/` — the game never touches the n
 - `tools/fetch-terrain.mjs` — opentopodata SRTM → `heightfield.json` (elevation grid, zeroed at the slice centre).
 - `tools/fetch-findel.mjs` — Overpass → `findel.json` (real Findel airport geometry, re-anchored just east of the city so it's a short drive).
 
-## Screenshots (how the team "saw" the game)
+## Verifying a change
 
-There is no committed shot harness (they lived in a scratch dir), but the approach is: launch headless Chrome with `--remote-debugging-port`, open `http://localhost:5199`, wait for `typeof window.game === 'object'`, set `window.game.car.x/y/heading` + `window.__forceHours`, wait ~2.5s, `Page.captureScreenshot`. **Always kill the Chrome child** (add a `process.on('exit')` trap) — leaked headless Chromes were the main resource leak. `npm run smoke` uses the same CDP flow and is the canonical "did I break it" check — it fails on a thrown exception AND on an all-black frame (which caught the camera-trapped-in-a-building class of bug that runs fine but renders nothing).
+Reading the code is not evidence. Every fault worth finding in this project was found by a picture or a number, including faults in code whose author had just described it correctly.
 
-## The development methodology (multi-session, telegraph-coordinated)
+```bash
+npm run smoke            # load the page headless; fails on an exception, a game that never boots, or a BLACK FRAME
+npm run smoke -- --prod  # build, preview dist, and check the built bundle
+```
 
-This is how the project was built, and how to resume it.
+The black-frame check is the one that earns its keep: a camera trapped inside a building renders nothing, throws nothing, and passes every other test.
 
-**The shape: one hub, many spokes.** A single **Master** session designs, integrates every asset into `scene.js`, and is the ONLY router between the asset builders and the simulation owner. A **Padawan** session owns the whole simulation half (`main.js`, `src/game/*`, physics, pedestrians, traffic, police) and listens ONLY to Master. Any number of short-lived **Builder** sessions each own ONE new asset file exclusively (`townhouse.js`, `streetprops.js`, `parks.js`, `airport.js`, `eastereggs.js`, and repeated passes on `car.js`). A hub beats a mesh once there are more than a couple of sessions.
+- `tools/birdseye.mjs` photographs the running city straight down from a given altitude. A complaint about a world is almost always a complaint about its layout, and you cannot see a layout from inside a car.
+- `tools/portrait.mjs` frames a single vehicle from the instanced fleet.
+- `tools/probe.mjs` evaluates an expression inside the running game and prints the result, which is how you get a number rather than an impression.
+- `tools/clip.mjs` records a GIF or an MP4 with the game's own audio. `.claude/skills/clip/SKILL.md` explains the traps, and there are several.
 
-**The rules that made it work:**
-- **One file per builder, exclusively.** A builder never edits another session's file. Cross-cutting needs are routed through Master on the telegraph. This is what let a dozen sessions commit into one repo without clobbering each other.
-- **Frozen contracts.** When many sessions depend on a module (e.g. `makeCar` / `makeCarFleet`), its interface is frozen and written down; a builder may change the guts, never the signature or the named hooks (`wheelFL/FR/RL/RR` pivots, `userData.headlight/tailGlow/lightbar`). Master verifies the contract survived before trusting a builder's report.
-- **Smoke after every integration.** Five builders committing into one scene kept taking the game down with undefined-symbol crashes that looked fine in isolation. `npm run smoke` (load the page once, fail on exception or black frame) catches them in seconds. Run it after every wire-in.
-- **Verify with a screenshot or a number, never an assumption.** The recurring bug family all night was "looks right in the code, wrong only in a measured value" — drift, a mis-signed offset, a stale build, a black frame. Shoot it or measure it.
-- **Gemini as an outside A-class eye.** Builders sent close-up renders to Gemini (`GEMINI_LLM_API_KEY`, `gemini-3.7-flash:generateContent`) for a 1-10 rating + concrete fixes, and iterated on the fixes (not the number — it anchors low on low-poly).
-- **Tag before risky work.** `git tag stable-pre-terrain` gave a one-command rollback before the terrain rewrite.
-- **Never `git push`.** Commit freely to `main`; pushing is the human's call.
+All four drive headless Chrome over CDP. **Every one of them traps `process.on('exit')` and kills its browser**, because leaked headless Chromes were this project's main resource leak — two were once found alive, parented to init, fifty minutes after the runs that spawned them had finished.
 
-### The telegraph — `1.txt`
+## Open items
 
-`1.txt` (in this repo) is the shared coordination log. Newest entry at the bottom; one aligned column format `DATE TIME  WHO  TYPE  message`. Sessions post when they START (claiming a file), hit MILESTONES, are BLOCKED, or DONE (releasing a file with the commit name). Types used: NOTE, ASK, ANSWER, ACK, DECISION, RELAY, BLOCKED, PROPOSE, STATUS, VERIFIED, SHUTDOWN. A session's telegraph watch is just `tail -F 1.txt | grep` for the tags it cares about (Padawan grepped `MASTER` only). It is kept in the repo as the record of how this was built.
-
-## Restoring the team (how to resume this project)
-
-To pick the project back up with the same setup:
-
-1. **Start the game and confirm it runs:** `npm install && npm run dev`, then `npm run smoke` — it must pass before you build anything on top.
-2. **Open the telegraph:** read `1.txt` end-to-end (it's the full history), then post a fresh `HELLO`/`NOTE` line so any other session knows a human is driving. Restart a watch if you want live coordination: `tail -F 1.txt | grep -E "MASTER|<your tags>"`.
-3. **Re-establish the roles you need:**
-   - **Master** (this role): design + integrate into `scene.js`/`decor.js` + route between builders and Padawan. Run `smoke` after every integration.
-   - **Padawan**: own `main.js` + `src/game/*`. First job on resume is the open **S3** item — put the car on the terrain: set the car mesh Y to `groundHeight(car.x, -car.y)` and orient its up-vector to `groundNormal(...)` so it pitches/rolls on slopes, and make `stepCar`/collision read ground height. `groundHeight` and `groundNormal` are exported from both `src/world/terrain.js` and re-exported from `src/render/scene.js`.
-   - **Builders**: spawn one per new asset, each with an exclusive new file under `src/render/`, the frozen-contract discipline, the Gemini loop, and "commit your file only, never push." Let them exit on completion; don't leave idle sessions consuming tokens.
-4. **Spawning sessions on this machine:** launch each with `claude` in this directory. If you want them auto-managed like the paragrapher sessions, mirror that project's LaunchAgent pattern (a `.plist` + a start script that runs `claude --bg -n <Name> --model <model> --effort <level>` per session). Otherwise just start them by hand as needed — the telegraph is all the coordination they require.
-
-### Open items at mothball time
-- **S3 — car on terrain** (Padawan): the one unfinished piece of the terrain feature (see above).
-- **Cars** — geometry was improved a lot (tumblehome greenhouse, hips, crowned roof, 4 body types) but the final Gemini-gated polish pass was cut off by a session limit. `car.js` holds the frozen contract; a fresh builder can resume the loop.
-- **BACKLOG.md** — remaining ideas (notably real terrain refinement was largely done; other detail passes noted there).
+- **The car does not drive on the terrain.** The heightfield is built and switched off (see above). Reviving it means the car reading `groundHeight` for its Y and tilting to `groundNormal` on slopes, and `stepCar` collision reading ground height. That is the one unfinished piece of the terrain work.
+- **NPC tail lamps carry no emissive.** The trim mesh is one vertex-coloured material and `emissive` is a uniform, so lit lamps would need another InstancedMesh per body type. At night they read as dark blocks. The hero car is unaffected.
+- **Only the player breaks things.** Traffic and pedestrians pass through destructible props. There is no sound on a break either — the feedback is the existing impact shake.
+- **`BACKLOG.md`** holds the remaining ideas.
