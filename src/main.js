@@ -15,6 +15,7 @@ import {createMinimap} from './game/minimap.js'
 import {createBigMap} from './game/bigmap.js'
 import {createFeedback} from './game/feedback.js'
 import {createPicker} from './game/picker.js'
+import {createUpdateCheck} from './game/update.js'
 import {createAudio} from './game/audio.js'
 import {createHud} from './game/hud.js'
 import {createPedestrians} from './game/pedestrians.js'
@@ -102,6 +103,8 @@ const bigmap = createBigMap(world)
 const feedback = createFeedback()
 // The editor's laser pointer: outlines whatever the cursor is on and edits it in place.
 const picker = createPicker(scene, camera, renderer.domElement)
+const updates = createUpdateCheck()
+let wasFrozen = false
 const audio = createAudio()
 // Browsers refuse to start audio without a gesture; the first key the player touches is ours.
 for (const ev of ['keydown', 'pointerdown']) window.addEventListener(ev, () => audio.resume(), {once: false})
@@ -195,6 +198,10 @@ function frame(now) {
   // The map covers the screen, so the world stops while it is up — you cannot steer what you cannot
   // see, and coming back to a wreck you could not avoid is not a fair way to lose a car.
   const frozen = held.paused || bigmap.isOpen() || feedback.isOpen()
+  // Freezing is the one moment the player is certainly not driving, so it is where the version check
+  // is allowed to touch the network. It rate-limits itself; this only tells it an opportunity exists.
+  if (frozen && !wasFrozen) updates.onPause()
+  wasFrozen = frozen
 
   if (!frozen) {
     gameHours = (gameHours + dt / 60) % 24    // one game hour per real minute
@@ -287,5 +294,5 @@ boot('almost there…')
 requestAnimationFrame(frame)
 
 // Handy while tuning, and harmless in the build: the console can reach the car.
-window.game = {THREE, scene, camera, renderer, picker, car, world, bird,
+window.game = {THREE, scene, camera, renderer, picker, updates, car, world, bird,
   camMode: () => CAM_MODES[camMode], setCamMode: (m) => { const i = CAM_MODES.indexOf(m); if (i < 0) return false; camMode = i; if (m !== 'bird') { restoreUp(camera); resetChase(chase) } else bird.ready = false; return true }, input, chase, crowd, police, traffic, audio, signals, minimap, carVisual, setHours: h => { gameHours = h }}
