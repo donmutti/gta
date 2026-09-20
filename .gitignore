@@ -1,0 +1,56 @@
+# Dependencies and build output
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Editor and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Agent scratch. .claude/skills is deliberately tracked — those are part of the repo.
+# Everything else under .claude is per-machine working state and must never be committed.
+.claude/*
+!.claude/skills/
+.claude/worktrees/
+.claude/settings.local.json
+
+# Screenshots, renders and video.
+#
+# This project verifies changes with pictures rather than assertions, so it generates a great many
+# of them — several hundred in one session. They are evidence while the work is happening and noise
+# in a repository forever, and binary blobs in git never get smaller.
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.webm
+*.mov
+screenshots/
+shots/
+
+# Logs, scratch and anything a tool wrote to be read once
+*.log
+tmp/
+scratch/
+jobs/
+feedback.jsonl
+feedback-done-*.jsonl
+*.backup.json
+city.before-*.json
+
+# Secrets. Nothing here has ever held one and it stays that way.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+id_rsa*
+
+# Session worklog: task bookkeeping for whoever is driving, not part of the game
+WORKLOG.md

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>LUX</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e1a; }
+    #app { position: fixed; inset: 0; }
+    #hud { position: fixed; left: 16px; bottom: 14px; color: #fff; font: 500 13px/1.4 -apple-system, sans-serif;
+           opacity: .85; text-shadow: 0 1px 4px rgba(0,0,0,.6); pointer-events: none; }
+
+    /* Boot screen. Lives in the HTML, not the bundle, so it paints the instant the document
+       arrives — the whole point is to cover the seconds BEFORE any JavaScript has run. */
+    #boot { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; gap: 22px; background: #0b0e1a;
+            color: #fff; font: 500 14px/1.5 system-ui, -apple-system, sans-serif;
+            transition: opacity .45s ease; }
+    #boot.done { opacity: 0; pointer-events: none; }
+    #boot h1 { margin: 0; font-size: 30px; letter-spacing: .38em; font-weight: 600; text-indent: .38em; }
+    #boot .sub { color: #7f8aa3; font-size: 12px; letter-spacing: .16em; text-transform: uppercase; margin-top: -14px; }
+    #boot .bar { width: 260px; height: 4px; border-radius: 4px; background: rgba(255,255,255,.12); overflow: hidden; }
+    /* Honest: the fill is the real fraction of stages done, so 1 of 5 is a fifth of the bar. It
+       still animates — a glow pulse plus a travelling sheen — so a long stage reads as working
+       rather than stuck, without lying about how far along it is. */
+    #boot .bar i { display: block; position: relative; overflow: hidden; width: 0; height: 100%;
+                   border-radius: 4px; background: linear-gradient(90deg, #ff3d21, #ff7a52);
+                   /* NO width transition, deliberately. Stages here finish in tens of milliseconds,
+                      so any easing means the bar is still crawling away from zero when the next
+                      stage replaces it — measured: the label read 1/5 while the rendered width was
+                      still 0%. It snaps to the honest fraction instead; the glow and sheen below
+                      supply the movement. */
+                   animation: glow 1.5s ease-in-out infinite; }
+    #boot .bar i::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+                          background: linear-gradient(90deg, transparent, rgba(255,255,255,.5), transparent);
+                          animation: sheen 1.3s ease-in-out infinite; }
+    @keyframes glow { 0%, 100% { box-shadow: 0 0 6px rgba(255,85,64,.5);  filter: brightness(1) }
+                      50%      { box-shadow: 0 0 16px rgba(255,85,64,.95); filter: brightness(1.22) } }
+    @keyframes sheen { to { transform: translateX(100%) } }
+    @media (prefers-reduced-motion: reduce) {
+      #boot .bar i, #boot .bar i::after { animation: none }
+    }
+    #boot .status { color: #9aa4bb; font-size: 13px; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="hud"></div>
+  <div id="boot">
+    <h1>LUXEMBOURG</h1>
+    <div class="sub">loading the city</div>
+    <div class="bar"><i id="boot-bar"></i></div>
+    <div class="status" id="boot-status">starting up…</div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
