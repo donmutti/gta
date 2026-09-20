@@ -215,6 +215,19 @@ function setBlockers(poly) {
   }
 }
 
+// --- siting rules, in one place because they are arguments, not magic numbers -------------------
+// ROAD_CAP is a limit of the instrument, not a design choice: world.onRoad only scans the 3x3
+// cells of a 32m grid round the query point, so any margin much past 32m starts missing roads and
+// answering "clear" when it is not. Every threshold below is kept inside it so that every one of
+// them is a measurement rather than a guess. The reasoning behind each is at its use site, in
+// placeProgramme.
+const ROAD_CAP = 30;
+const PLAY_ROAD = 20;    // every point of a play pad, this far from the nearest carriageway
+const PLAY_SIGHT = 40;   // ...and this near a walk, so somebody goes past it
+const DOG_SIGHT = 55;    // a dog run may sit deeper; it is used, not supervised
+const CAFE_ROAD = 10;    // a terrace wants the street, but not to have its tables in it
+const CAFE_SIGHT = 40;   // a terrace off the walks is a terrace with no customers
+
 // How far is (x, y) from the nearest carriageway edge, capped? Binary-searched on onRoad's margin.
 // Used to tell a quiet corner (playground, dog run) from a busy frontage (cafe, main entrance).
 function roadDist(x, y, cap) {
@@ -350,7 +363,7 @@ export function buildParks(greenPolys, onRoad = null) {
   // `perPark` is the debug hook that makes "half this park has no walk in it" a number instead of
   // an impression: one row per green with how its belt, its gates and its prune actually went.
   const stats = {parks: 0, full: 0, wild: 0, compartment: 0, skipped: 0, gates: 0, imagery: [],
-                 why: {}, perPark: []};
+                 why: {}, perPark: [], playDropped: 0, progSites: []};
 
   // --- classify every polygon once ------------------------------------------------------------
   const metas = greenPolys.map((poly, pi) => {
@@ -723,34 +736,27 @@ function layoutPark(m, rng, A, stats) {
     if (!big) splitCrossings(N, E, chordEdges);
   }
 
-  // ---- 6. PROGRAMME ------------------------------------------------------------------------------
-  const prog = full ? placeProgramme(m, rng, N, E, addNode, tryEdge, gateNodes, beltIdx, ring, sm, A, stats, big, medium) : null;
+  // ---- 6. PRUNE EVERY DEAD END, BEFORE ANYTHING IS SITED ----------------------------------------
+  // This used to run AFTER the programme, and that ordering quietly stranded facilities. A spur is
+  // spliced onto the nearest existing edge; if that edge belonged to a belt arc the prune then ate,
+  // the prune walked the arc inward, reached the splice junction with one edge left — the spur —
+  // and took that too, because a splice junction is not a terminal. The facility kept its pad, its
+  // fence and its bin and lost every path to it: measured, four of thirty-six playgrounds sat in
+  // open grass with the nearest walk 20 to 38 metres away. No invariant caught it, because the
+  // walks that remained did not dead-end anywhere; they simply never went there.
+  //
+  // Pruning first fixes that at the root, and it is what makes the sightline test below mean
+  // anything: a candidate is measured against the walks the park will actually have, not against
+  // arcs that are about to be deleted. Everything the programme adds afterwards is either a closed
+  // circuit (the pond walk, the parterre ring) or a spur spliced onto a surviving edge, so the
+  // second pass has nothing left to eat — it is there to catch a half-built circuit, not to re-do
+  // this one.
+  pruneDeadEnds(N, E);
+  if (!E.length) { stats.why.prunedAway = (stats.why.prunedAway||0)+1; return false; }
 
-  // ---- 7. PRUNE EVERY DEAD END --------------------------------------------------------------------
-  // Peel loose chains off in one linear pass: every time a node drops to degree 1 and is not an
-  // entrance or a facility, its last edge goes and its neighbour is re-examined. Iterating the
-  // whole edge list instead would be quadratic, and a belt arc is hundreds of nodes long.
-  {
-    const deg0 = new Array(N.length).fill(0);
-    const inc = Array.from({length: N.length}, () => []);
-    E.forEach((e, i) => { deg0[e.a]++; deg0[e.b]++; inc[e.a].push(i); inc[e.b].push(i); });
-    const dead = new Uint8Array(E.length);
-    const stack = [];
-    for (let i = 0; i < N.length; i++) if (deg0[i] === 1 && !N[i].term) stack.push(i);
-    while (stack.length) {
-      const u = stack.pop();
-      if (deg0[u] !== 1 || N[u].term) continue;
-      for (const ei of inc[u]) {
-        if (dead[ei]) continue;
-        dead[ei] = 1;
-        const v = E[ei].a === u ? E[ei].b : E[ei].a;
-        deg0[u]--; deg0[v]--;
-        if (deg0[v] === 1 && !N[v].term) stack.push(v);
-        break;
-      }
-    }
-    for (let i = E.length - 1; i >= 0; i--) if (dead[i]) E.splice(i, 1);
-  }
+  // ---- 7. PROGRAMME ------------------------------------------------------------------------------
+  const prog = full ? placeProgramme(m, rng, N, E, addNode, tryEdge, gateNodes, beltIdx, ring, sm, A, stats, big, medium) : null;
+  pruneDeadEnds(N, E);
   if (!E.length) { stats.why.prunedAway = (stats.why.prunedAway||0)+1; return false; }
 
   // ---- 8. RIBBON + JUNCTION DISCS ------------------------------------------------------------------
@@ -787,6 +793,31 @@ function layoutPark(m, rng, A, stats) {
     prog: [prog?.cafe && 'cafe', prog?.play && 'play', prog?.dog && 'dog',
            prog?.pond && 'pond', prog?.rings && 'rings', prog?.rondel && 'rondel'].filter(Boolean).join('+')});
   return true;
+}
+
+// Peel loose chains off in one linear pass: every time a node drops to degree 1 and is not an
+// entrance or a facility, its last edge goes and its neighbour is re-examined. Iterating the whole
+// edge list instead would be quadratic, and a belt arc is hundreds of nodes long.
+function pruneDeadEnds(N, E) {
+  const deg0 = new Array(N.length).fill(0);
+  const inc = Array.from({length: N.length}, () => []);
+  E.forEach((e, i) => { deg0[e.a]++; deg0[e.b]++; inc[e.a].push(i); inc[e.b].push(i); });
+  const dead = new Uint8Array(E.length);
+  const stack = [];
+  for (let i = 0; i < N.length; i++) if (deg0[i] === 1 && !N[i].term) stack.push(i);
+  while (stack.length) {
+    const u = stack.pop();
+    if (deg0[u] !== 1 || N[u].term) continue;
+    for (const ei of inc[u]) {
+      if (dead[ei]) continue;
+      dead[ei] = 1;
+      const v = E[ei].a === u ? E[ei].b : E[ei].a;
+      deg0[u]--; deg0[v]--;
+      if (deg0[v] === 1 && !N[v].term) stack.push(v);
+      break;
+    }
+  }
+  for (let i = E.length - 1; i >= 0; i--) if (dead[i]) E.splice(i, 1);
 }
 
 // Shortest-path distance between two belt nodes, walking the belt edges only. Used to decide
@@ -865,7 +896,25 @@ const MOWN   = [0.29, 0.46, 0.24];
 // — the pond walk, the parterre ring — gets hooked onto the rest of the park. In that case the
 // circuit's own edges are the nearest thing to it by miles, so they are excluded from the search;
 // otherwise the ring would cheerfully splice into itself and stay an island.
-function attachSpur(N, E, addNode, poly, px, py, joinTo = -1) {
+// `avoid` is the facility's own pad, as {x, y, ang, hw, hh}. Without it the splice point is simply
+// the nearest point on any walk, and when that walk happens to lie on the far side of the pad the
+// spur is run straight ACROSS the thing it is meant to serve — a gravel path through the middle of
+// the sandpit, measured at exactly 0.0m from one playground's centre. The door sits just outside
+// the fence line, so the rule is: the approach may touch the door and nothing else.
+// `dry` answers "could this be attached?" without mutating anything, so a candidate can be
+// tested before it is chosen rather than discovered to be unreachable after.
+function attachSpur(N, E, addNode, poly, px, py, joinTo = -1, avoid = null, dry = false) {
+  const crosses = (ax, ay, bx, by) => {
+    if (!avoid) return false;
+    const ux = Math.cos(avoid.ang), uy = Math.sin(avoid.ang);
+    const hw = avoid.hw + 0.8, hh = avoid.hh + 0.8;          // the fence line, not the pad edge
+    const n = Math.max(2, Math.ceil(Math.hypot(bx - ax, by - ay)));
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, dx = ax + (bx - ax) * t - avoid.x, dy = ay + (by - ay) * t - avoid.y;
+      if (Math.abs(dx * ux + dy * uy) < hh && Math.abs(-dx * uy + dy * ux) < hw) return true;
+    }
+    return false;
+  };
   const ban = new Set();
   if (joinTo >= 0) {
     const q = [joinTo]; ban.add(joinTo);
@@ -886,10 +935,13 @@ function attachSpur(N, E, addNode, poly, px, py, joinTo = -1) {
     let t = ((px - a.x) * dx + (py - a.y) * dy) / l2;
     t = Math.max(0.12, Math.min(0.88, t));
     const qx = a.x + t * dx, qy = a.y + t * dy, d = Math.hypot(px - qx, py - qy);
-    if (!best || d < best.d) best = {d, ei, qx, qy};
+    if (best && d >= best.d) continue;
+    if (crosses(qx, qy, px, py)) continue;
+    best = {d, ei, qx, qy};
   }
   if (!best || best.d > 90) return null;
   if (!okSeg([best.qx, best.qy], [px, py], poly, 1.0, 1.2)) return null;
+  if (dry) return {ji: -1, ti: -1};
   const e = E[best.ei], ea = e.a, eb = e.b, ek = e.kind;
   E.splice(best.ei, 1);
   const ji = addNode(best.qx, best.qy, false);
@@ -909,16 +961,22 @@ function fitRect(poly, cx, cy, ang, hw, hh, em = 2.5, rm = 2.0) {
   }
   return true;
 }
-// Keep a facility off the walks that already exist (its own spur is added afterwards).
-function clearOfPaths(N, E, cx, cy, rad) {
+// How far is the nearest walk? This used to be a one-sided "is it clear of the paths" test, and
+// one-sided is only half the requirement. A facility has to be OFF the walks — it is a place, not
+// a path — and at the same time WITHIN SIGHT of them, because a park facility is supervised by the
+// people walking past it and by nothing else. So the answer has to be a distance, not a boolean:
+// the callers below want a floor AND a ceiling out of it.
+function pathDist(N, E, cx, cy) {
+  let best = Infinity;
   for (const e of E) {
     const a = N[e.a], b = N[e.b];
     const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1;
     let t = ((cx - a.x) * dx + (cy - a.y) * dy) / l2;
     t = t < 0 ? 0 : t > 1 ? 1 : t;
-    if (Math.hypot(cx - (a.x + t * dx), cy - (a.y + t * dy)) < rad) return false;
+    const d = Math.hypot(cx - (a.x + t * dx), cy - (a.y + t * dy));
+    if (d < best) best = d;
   }
-  return true;
+  return best;
 }
 
 // Ring a facility with fencing: panels laid along the rectangle's perimeter, with a gap left on
@@ -1049,16 +1107,27 @@ function placeProgramme(m, rng, N, E, addNode, tryEdge, gateNodes, beltIdx, ring
   }
 
   // ---- candidate pockets: legal ground inside the belt, off the open middle --------------------
+  // Four depth tiers, not three. The old set stopped 29m in from the boundary, which in a park
+  // 80m across never reaches the middle — so the quietest ground in the park was not even a
+  // candidate and the playground had to take a frontage pocket it should never have had. The
+  // fourth tier costs one more ring sample's worth of tests and is what gives the rule below
+  // somewhere to move things TO rather than only somewhere to reject them from.
+  //
+  // `quiet` is capped at 30 rather than 28 for a reason worth writing down: world.onRoad only
+  // scans the 3x3 cells of a 32m grid round the point, so a margin past ~32m silently misses
+  // roads and starts reporting clear ground that is not. 30 is the largest honest question that
+  // can be asked of it, and every threshold in this file stays inside that.
   const pockets = [];
   const stride = Math.max(1, Math.floor(ring.length / 26));
   for (let i = 0; i < ring.length; i += stride) {
     const s = ring[i];
-    for (const extra of [11, 19, 29]) {
+    for (const extra of [11, 19, 29, 41]) {
       const d = sm[i] + extra;
       const x = s.p[0] + s.n[0] * d, y = s.p[1] + s.n[1] * d;
       if (!okPt(x, y, poly, 7, 3.5)) continue;
       pockets.push({x, y, ang: Math.atan2(s.n[1], s.n[0]),
-                    quiet: roadDist(x, y, 28), edge: edgeDist(x, y, poly)});
+                    quiet: roadDist(x, y, ROAD_CAP), edge: edgeDist(x, y, poly),
+                    path: pathDist(N, E, x, y)});
     }
   }
   if (!pockets.length) return out;
@@ -1066,46 +1135,110 @@ function placeProgramme(m, rng, N, E, addNode, tryEdge, gateNodes, beltIdx, ring
   const busiest = gateNodes.slice().sort((a, b) => a.g.rd - b.g.rd)[0];
   const bp = [N[busiest.ii].x, N[busiest.ii].y];
   const scale = Math.min(1, Math.sqrt(area) / 130);
-  const take = (cands, score) => {
-    let best = null, bs = -Infinity;
-    for (const p of cands) { const v = score(p); if (v > bs) { bs = v; best = p; } }
-    return best;
+  // This used to return the single highest-scoring pocket, and if that pocket's access spur then
+  // failed to splice, the facility was thrown away — the park lost its playground not because it
+  // had nowhere to put one but because the one place it tried could not be reached. Rank instead,
+  // and walk down the ranking until one of them can actually be joined to the walks. The dry run
+  // asks attachSpur exactly the question it will be asked for real, without touching the graph.
+  const pick = (cands, score, hw, hh) => {
+    const ranked = cands.slice().sort((a, b) => score(b) - score(a)).slice(0, 8);
+    for (const p of ranked) {
+      const pad = {x: p.x, y: p.y, ang: p.ang, hw, hh};
+      const door = [p.x + Math.cos(p.ang) * -(hh + 1), p.y + Math.sin(p.ang) * -(hh + 1)];
+      if (!attachSpur(N, E, addNode, poly, door[0], door[1], -1, pad, true)) continue;
+      return {...pad, quiet: p.quiet, sight: p.path};
+    }
+    return null;
   };
-  const free = (p, hw, hh) => fitRect(poly, p.x, p.y, p.ang, hw, hh) &&
-                              clearOfPaths(N, E, p.x, p.y, Math.max(hw, hh) + 2) &&
-                              (!out.pond || dist2d([p.x, p.y], [out.pond.x, out.pond.y]) > out.pond.r + Math.max(hw, hh) + 4);
+  // `rm` is the clearance demanded of the WHOLE PAD, not of its centre: fitRect tests the four
+  // corners, the four edge midpoints and the middle, so a pad only passes if every part of it is
+  // that far from tarmac. `sight` is the ceiling on how far the nearest walk may be.
+  const free = (p, hw, hh, rm = 2.0, sight = Infinity) =>
+    p.path > Math.max(hw, hh) + 2 && p.path <= sight &&
+    fitRect(poly, p.x, p.y, p.ang, hw, hh, 2.5, rm) &&
+    (!out.pond || dist2d([p.x, p.y], [out.pond.x, out.pond.y]) > out.pond.r + Math.max(hw, hh) + 4);
 
-  // CAFE + VERANDA — at the busiest entrance, where people already walk past.
+  // CAFE + VERANDA — at the busiest entrance, where people already walk past. A terrace is the one
+  // element that WANTS the street, so it is scored purely on reaching the gate; but wanting the
+  // street is not the same as being in it, and with no floor at all the gate-proximity score put
+  // one deck 3.0m from a live carriageway — tables on the kerb. CAFE_ROAD is the footway and the
+  // park railing, which is all the separation a terrace needs and the least it can have.
   if (medium) {
     const hw = 6.5 * scale + 2, hh = 5 * scale + 1.5;
-    const c = take(pockets.filter(p => free(p, hw, hh) && dist2d([p.x, p.y], bp) < 85),
-                   p => -dist2d([p.x, p.y], bp));
-    if (c) out.cafe = {x: c.x, y: c.y, ang: c.ang, hw, hh};
+    // The 85m reach stays flat rather than scaling with the park, and that is a decision, not an
+    // oversight. Measured, terrace-to-busiest-gate runs 13m to 83m, median 33m, with two outliers
+    // at 81m and 83m in mid-sized parks; scaling the radius down deletes both. But "busiest" here
+    // is only ever inferred from which gate has a carriageway nearest it, and in a park ringed by
+    // streets that ranking is close to arbitrary — the two it deletes photograph as good terraces
+    // beside a path junction. A weak proxy may bias a choice; it may not delete the thing.
+    const c = pick(pockets.filter(p => free(p, hw, hh, CAFE_ROAD, CAFE_SIGHT) && dist2d([p.x, p.y], bp) < 85),
+                   p => -dist2d([p.x, p.y], bp), hw, hh);
+    if (c) out.cafe = {...c, gate: dist2d([c.x, c.y], bp)};
   }
-  // PLAYGROUND — set back from traffic, but on the network so it is overlooked, and well away
-  // from the cafe terrace and (below) the dog run.
+  // PLAYGROUND — the one element here with a HARD FLOOR rather than a preference, and the reason
+  // is that a preference demonstrably was not enough. Scoring on `quiet` and taking the best
+  // pocket sounds like it puts children away from traffic, and on most parks it does — the median
+  // came out at the 30m measuring cap. But "best available" has no floor under it, so in a park
+  // where every pocket is on a frontage the score cheerfully returns the least bad one, and the
+  // measured result was a playground pad whose corner stood 8.4m from a live carriageway, with
+  // seven more inside 15m. That is the one siting in this file a real planner would refuse to
+  // sign, and refusing it needs a number, not a nudge.
+  //
+  // Three things govern where children can play, and all three are enforced here rather than
+  // scored:
+  //
+  //   PLAY_ROAD = 20m to the nearest carriageway, from EVERY point of the pad, not from its
+  //     centre. It is not a stopping-distance figure — the pad is fenced, and the fence is what
+  //     stops a child reaching the road. It is the width needed to actually FIT the things that
+  //     make the separation real: the footway and verge outside the park railing, the railing and
+  //     its hedge, the belt walk inside it, and a planted strip between that walk and the pad.
+  //     Below that at least one of them is missing and the play area is simply hard against the
+  //     street.
+  //
+  //     20 rather than some other number because the city was asked. Sweeping the threshold over
+  //     every park and counting what survives: 12m keeps 33 playgrounds, 15m keeps 27, 18m and
+  //     20m both keep 26, 22m and 24m keep 21, 26m keeps 20. So 20 is the largest setback that
+  //     costs nothing at all over 18, and the last step before the count falls off a cliff — four
+  //     more metres would buy nothing and cost five playgrounds. The measurement has a ceiling of
+  //     its own at 30m (see ROAD_CAP above), and 20 sits well inside the range onRoad can still
+  //     answer truthfully, which a 30m rule would not.
+  //   PLAY_SIGHT = 40m to the nearest walk. A playground is supervised by the people going past
+  //     it; one tucked 40m into the shrubbery is overlooked by nobody, which is its own kind of
+  //     unsafe and reads from the air as a pad dropped at random. The floor on the same number
+  //     (inside `free`) keeps it off the walk itself.
+  //   Distance from the other programme: at least 26m from a cafe terrace, and the dog run below
+  //     is held 45m off whatever the playground takes. Children and loose dogs do not share a
+  //     fence line.
+  //
+  // If nothing in the park satisfies all three, the park gets no playground. An omitted
+  // playground costs one pad; a badly sited one discredits every other placement in the file.
   {
     const hw = 7.5 * scale + 2.5, hh = 6 * scale + 2;
-    const c = take(pockets.filter(p => free(p, hw, hh) &&
+    const c = pick(pockets.filter(p => free(p, hw, hh, PLAY_ROAD, PLAY_SIGHT) &&
                      (!out.cafe || dist2d([p.x, p.y], [out.cafe.x, out.cafe.y]) > 26)),
-                   p => p.quiet * 1.6 + p.edge * 0.5);
-    if (c) out.play = {x: c.x, y: c.y, ang: c.ang, hw, hh};
+                   p => p.quiet * 1.6 + p.edge * 0.5, hw, hh);
+    if (c) out.play = c;
+    else stats.playDropped++;
   }
   // DOG RUN — fenced, in the park's own quiet depth, never beside the playground or the terrace.
+  // 45m off the playground, and 40m off the terrace rather than the old 32: a dog run upwind of
+  // people eating is the complaint every city gets about them, and 32m put it inside conversation
+  // distance. It keeps the playground's road floor too — a fenced run beside a carriageway is a
+  // dog in the road the first time the gate is left open.
   if (big) {
     const hw = 9 * scale + 3, hh = 6.5 * scale + 2;
-    const c = take(pockets.filter(p => free(p, hw, hh) &&
+    const c = pick(pockets.filter(p => free(p, hw, hh, PLAY_ROAD, DOG_SIGHT) &&
                      (!out.play || dist2d([p.x, p.y], [out.play.x, out.play.y]) > 45) &&
-                     (!out.cafe || dist2d([p.x, p.y], [out.cafe.x, out.cafe.y]) > 32)),
-                   p => p.edge * 1.2 + p.quiet * 0.5);
-    if (c) out.dog = {x: c.x, y: c.y, ang: c.ang, hw, hh};
+                     (!out.cafe || dist2d([p.x, p.y], [out.cafe.x, out.cafe.y]) > 40)),
+                   p => p.edge * 1.2 + p.quiet * 0.5, hw, hh);
+    if (c) out.dog = c;
   }
 
   // ---- realise each facility and wire it to the network ----------------------------------------
   if (out.cafe) {
     const c = out.cafe;
     const door = [c.x + Math.cos(c.ang) * -(c.hh + 1), c.y + Math.sin(c.ang) * -(c.hh + 1)];
-    if (!attachSpur(N, E, addNode, poly, door[0], door[1])) { delete out.cafe; }
+    if (!attachSpur(N, E, addNode, poly, door[0], door[1], -1, c)) { delete out.cafe; }
     else {
       A.keepClear.push({x: c.x, y: c.y, r: Math.hypot(c.hw, c.hh) + 2});
       A.rects.push({x: c.x, y: c.y, ang: c.ang, hw: c.hw, hh: c.hh, rgb: DECK, y0: 0.072});
@@ -1131,7 +1264,7 @@ function placeProgramme(m, rng, N, E, addNode, tryEdge, gateNodes, beltIdx, ring
   if (out.play) {
     const p = out.play;
     const door = [p.x + Math.cos(p.ang) * -(p.hh + 1), p.y + Math.sin(p.ang) * -(p.hh + 1)];
-    if (!attachSpur(N, E, addNode, poly, door[0], door[1])) { delete out.play; }
+    if (!attachSpur(N, E, addNode, poly, door[0], door[1], -1, p)) { delete out.play; }
     else {
       A.keepClear.push({x: p.x, y: p.y, r: Math.hypot(p.hw, p.hh) + 2});
       A.rects.push({x: p.x, y: p.y, ang: p.ang, hw: p.hw, hh: p.hh, rgb: SAND, y0: 0.072});
@@ -1160,7 +1293,7 @@ function placeProgramme(m, rng, N, E, addNode, tryEdge, gateNodes, beltIdx, ring
   if (out.dog) {
     const d = out.dog;
     const door = [d.x + Math.cos(d.ang) * -(d.hh + 1), d.y + Math.sin(d.ang) * -(d.hh + 1)];
-    if (!attachSpur(N, E, addNode, poly, door[0], door[1])) { delete out.dog; }
+    if (!attachSpur(N, E, addNode, poly, door[0], door[1], -1, d)) { delete out.dog; }
     else {
       A.keepClear.push({x: d.x, y: d.y, r: Math.hypot(d.hw, d.hh) + 2});
       A.rects.push({x: d.x, y: d.y, ang: d.ang, hw: d.hw, hh: d.hh, rgb: EARTH, y0: 0.072});
@@ -1171,6 +1304,15 @@ function placeProgramme(m, rng, N, E, addNode, tryEdge, gateNodes, beltIdx, ring
                     y: d.y - vy * d.hw * 0.45 + uy * d.hh * 0.3, rot: d.ang + Math.PI / 2});
       A.bins.push({x: door[0], y: door[1], rot: faceRot(door[0], door[1], d.x, d.y)});
     }
+  }
+  // Debug hook in the spirit of the rest of the file: the siting of every facility that SURVIVED
+  // — after the spur test has had its say — as three numbers, so "is the playground far enough
+  // from the road" is answerable from outside without re-deriving the layout.
+  for (const k of ['cafe', 'play', 'dog']) {
+    const f = out[k];
+    if (f) stats.progSites.push({pi, kind: k, x: +f.x.toFixed(0), y: +f.y.toFixed(0),
+                                 road: +f.quiet.toFixed(1), sight: +f.sight.toFixed(1),
+                                 ...(k === 'cafe' ? {gate: +f.gate.toFixed(1)} : {})});
   }
   return out;
 }
