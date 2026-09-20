@@ -15,9 +15,9 @@ npm run dev
 
 It prints a line like `Local: http://localhost:5199/`. Open that.
 
-**What it looks like when it is working:** a few seconds of black while the city builds, then you are sitting in a red car on a real Luxembourg street, in daylight, with people walking past on the pavement. If you get a black screen that stays black for more than about fifteen seconds, something is wrong — see below.
+**What it looks like when it is working:** the screen is black for about ten seconds while the city is built — 1,667 roads and 6,196 buildings become a world before the first frame — and then you are sitting in a red car on a real Luxembourg street, in daylight, with people walking past on the pavement. Ten seconds is what it takes on a recent laptop; an older one will take longer, so give it a minute before concluding anything is wrong.
 
-A cold clone installs in under a second and downloads about 17 packages. The city itself is committed, so nothing is fetched while you play.
+Measured on a cold clone: `npm install` takes under a second and fetches 17 packages, and the checkout is about 5 MB because the city is committed — nothing is fetched from the network while you play.
 
 ### If it does not work
 
