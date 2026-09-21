@@ -95,6 +95,20 @@ const CROSS_SECONDS = 2.6
 const CROSS_CHANCE = 0.06
 /** Metres from the camera within which a person is hidden rather than drawn across the lens. */
 const LENS_RADIUS = 4.6
+/** Shoulder to shoulder. Closer than this and two people are occupying each other. */
+const PERSONAL = 0.85
+/**
+ * How far ahead somebody looks before easing off for what is in front of them.
+ *
+ * Measured rather than chosen twice over. At 2.6m with a three-quarter slowdown, a fifth of the
+ * crowd was crawling and the mean pace fell from 1.05 to 0.84, which reads as a city wading
+ * through treacle — and it made the overlapping worse, because people who slow down bunch up.
+ * Easing off by under half, and only for somebody nearly straight ahead, is the version that
+ * looks like courtesy rather than congestion.
+ */
+const LOOKOUT = 2.2
+/** Metres per second of sideways step out of somebody's way. A brisk shoulder turn, not a dive. */
+const SIDESTEP = 1.6
 
 // --- the skeleton ------------------------------------------------------------------------------
 // Heights in metres for a 1.75m reference adult, measured from the sole. Everybody is this figure
@@ -431,11 +445,16 @@ export function createPedestrians(world, scene, signals) {
   // crowd in the frame loop, so what it reads is this frame's positions. It exists because the
   // alternative — every vehicle testing every person — is 34 x 340 distance checks a frame to
   // discover that almost nobody is under a car.
-  const HIT_CELL = 12
+  // Four metres, not twelve. The grid started life serving vehicle strikes, where a coarse cell
+  // is fine; it now also answers "who is about to walk into whom", which is asked 340 times a
+  // frame and wants a cell holding one or two people rather than a dozen.
+  const HIT_CELL = 4
   const hitGrid = new Map()
+  let gridStamp = 0
   const cellKey = (cx, cy) => cx * 46337 + cy       // one integer, no string allocation per insert
   function rebuildHitGrid() {
     hitGrid.clear()
+    gridStamp++
     for (let i = 0; i < peds.length; i++) {
       const p = peds[i]
       if (p.down > 0) continue                      // already on the floor; nothing to knock down
@@ -444,6 +463,80 @@ export function createPedestrians(world, scene, signals) {
       if (bucket) bucket.push(p)
       else hitGrid.set(key, [p])
     }
+  }
+
+  /**
+   * Walk the buckets overlapping a radius, calling `fn` for each OTHER person in them.
+   *
+   * Written as a callback rather than returning a list because it runs once per person per frame
+   * and an allocation there is 340 short-lived arrays a frame for nothing.
+   */
+  function eachNear(ped, r, fn) {
+    const c0 = Math.floor((ped.x - r) / HIT_CELL), c1 = Math.floor((ped.x + r) / HIT_CELL)
+    const r0 = Math.floor((ped.y - r) / HIT_CELL), r1 = Math.floor((ped.y + r) / HIT_CELL)
+    for (let cx = c0; cx <= c1; cx++) {
+      for (let cy = r0; cy <= r1; cy++) {
+        const bucket = hitGrid.get(cellKey(cx, cy))
+        if (!bucket) continue
+        for (const other of bucket) if (other !== ped) fn(other)
+      }
+    }
+  }
+
+  /**
+   * Keep people out of each other, and have them see it coming.
+   *
+   * Two separate behaviours that a crowd needs together and which look wrong apart. SEPARATION is
+   * a push out of somebody else's personal space, and on its own it produces people who walk into
+   * each other and then shove apart. ANTICIPATION is slowing down for somebody in front before
+   * reaching them, and on its own it produces people who stop politely and then walk through each
+   * other anyway.
+   *
+   * Both are steering rather than state: computed fresh each frame, applied through velocity, with
+   * nothing accumulated between frames. That is deliberate after watching a stored offset diverge
+   * to a quarter of a million metres in the traffic file earlier tonight — a term that cannot
+   * accumulate cannot run away.
+   */
+  function avoid(ped, dt) {
+    let px = 0, py = 0, slow = 1
+    const wx = Math.cos(ped.heading), wy = Math.sin(ped.heading)
+    eachNear(ped, LOOKOUT, (other) => {
+      const dx = ped.x - other.x, dy = ped.y - other.y
+      const d2 = dx * dx + dy * dy
+      if (d2 > LOOKOUT * LOOKOUT || d2 < 1e-6) return
+      const d = Math.sqrt(d2)
+      if (d < PERSONAL) {
+        // Falls off with distance, so a brush is a nudge and a collision is a shove.
+        const push = (PERSONAL - d) / PERSONAL
+        px += (dx / d) * push
+        py += (dy / d) * push
+      }
+      // AHEAD, and how directly. Somebody off to the side at the same distance is not in the way,
+      // and slowing for them is what makes a crowd look like it is wading through treacle.
+      const ahead = (-dx * wx - dy * wy) / d
+      if (ahead > 0.55 && d < LOOKOUT) {
+        const near = 1 - (d - PERSONAL) / (LOOKOUT - PERSONAL)
+        const want = 1 - 0.45 * Math.max(0, Math.min(1, near)) * ahead
+        if (want < slow) slow = want
+      }
+    })
+    // INTO THE OFFSET, not into the position, and this is the whole correctness of it.
+    //
+    // `place()` rewrites x and y from the path every single frame, so a sidestep written straight
+    // into the position is erased before anybody sees it. The first version did exactly that and
+    // the measurement was unambiguous: overlapping pairs went UP, from 29.2 to 32.7, because the
+    // push did nothing and the slowing-down survived — people politely bunched into each other.
+    //
+    // `fox`/`foy` are applied after `place()` and decay on their own, which makes them the right
+    // home. They are also self-limiting: a push of at most SIDESTEP*dt against a decay of 1.6 per
+    // second settles at about a metre however long somebody is stuck in a crowd.
+    const mag = Math.hypot(px, py)
+    if (mag > 0) {
+      const scale = Math.min(mag, 1) / mag * SIDESTEP * dt
+      ped.fox += px * scale
+      ped.foy += py * scale
+    }
+    return slow
   }
 
   function edgeNear(x, y, r) {
@@ -957,6 +1050,10 @@ export function createPedestrians(world, scene, signals) {
       for (let i = 0; i < peds.length; i++) {
         const ped = peds[i]
         const k = ped.build.scale
+        // Last frame's answer for this person, which is what the gait uses. Using this frame's
+        // would mean computing it before they have moved, and one frame of lag in a 2.6m lookout
+        // is two centimetres.
+        let avoidSlow = ped.room ?? 1
 
         // Struck. `police.knock` sets `down` and a flip direction; the first frame on which that is
         // true is the impact, and the car's own velocity at that instant is the whole grading. The
@@ -1019,11 +1116,19 @@ export function createPedestrians(world, scene, signals) {
 
         const busy = crossings(ped, dt, clock)
         // Fleeing IS running: a scared person does not stroll away at 1.2 m/s.
-        const want = ped.flee > 0 ? 1.65 : 1
+        // And somebody in front is a reason to ease off BEFORE arriving at them, which is the
+        // difference between a crowd and a queue of colliding dots. Fright wins over courtesy:
+        // running from a car through a knot of people is exactly when you do not slow down.
+        const room = ped.flee > 0 ? 1 : avoidSlow
+        const want = (ped.flee > 0 ? 1.65 : 1) * room
         ped.gait += (want - ped.gait) * Math.min(1, dt * 6)
         if (!busy) step(ped, dt)
         else if (!ped.waiting) advance(ped, dt, ped.pace * ped.gait)
         place(ped)
+        // AFTER place(), because place() writes the position from the path and would discard a
+        // sidestep applied before it. The sidestep is the one thing here that must survive the
+        // path, since the whole point is to leave it for a moment.
+        ped.room = avoid(ped, dt)
 
         // Scatter. A car bearing down at speed sends people away from it and, crucially, AWAY FROM
         // THE ROAD — running directly away would keep them in front of the bumper. The push is
