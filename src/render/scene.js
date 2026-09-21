@@ -578,7 +578,34 @@ export function createScene(world) {
     for (const o of scene.children) if (!pickable.has(o)) o.userData.baked = true;
   }
 
-  return {scene, camera, renderer, render, update, follow, resize, makeCar, makeDog, makePigeonFleet, toV3, setSignalPhase: signals.setPhase};
+  // --- the delivery beacon. A column of light standing on the point the player is driving to.
+  //
+  // It is tall and thin and unlit rather than pretty, and the height is the whole specification:
+  // it has to clear the buildings from a street away, because a player who has never seen this
+  // game has no other way of knowing where to go. The street name tells somebody who knows
+  // Luxembourg; the beacon tells everybody else.
+  // depthTest OFF, and this is the whole point of it rather than a rendering preference. A beacon
+  // that is occluded by the city is a beacon you can only see once you no longer need it: tested
+  // by standing 70m from a drop with a building between, where it disappeared completely. It draws
+  // through geometry like a waypoint, because a player who has never seen this game has nothing
+  // else telling them where to go.
+  const beaconMat = new THREE.MeshBasicMaterial({
+    color: 0xffc21f, transparent: true, opacity: 0.38, depthWrite: false, depthTest: false,
+  });
+  const beacon = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.6, 90, 10, 1, true), beaconMat);
+  beacon.renderOrder = 999;          // after the city, so 'no depth test' means 'over it'
+  beacon.name = 'deliveryBeacon';   // named so a test can find THIS cylinder, not any of the hundreds in the city
+  beacon.frustumCulled = false;
+  beacon.visible = false;
+  scene.add(beacon);
+
+  /** Map coordinates, or null to hide it. The coordinate law: three.z is -map.y. */
+  function setBeacon(p) {
+    beacon.visible = !!p;
+    if (p) beacon.position.set(p.x, 45, -p.y);
+  }
+
+  return {scene, camera, renderer, render, update, follow, resize, makeCar, makeDog, makePigeonFleet, toV3, setBeacon, setSignalPhase: signals.setPhase};
 }
 
 // =============================================================================

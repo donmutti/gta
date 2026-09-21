@@ -57,7 +57,7 @@ export function createMinimap(world) {
 
   return {
     canvas,
-    update(dt, car, police, traffic) {
+    update(dt, car, police, traffic, marker = null) {
       due -= dt
       if (due > 0) return
       due = REDRAW_EVERY
@@ -125,7 +125,23 @@ export function createMinimap(world) {
         for (const [x, y] of corners.slice(1)) ctx.lineTo(x, y)
         ctx.closePath()
         ctx.stroke()
-        ctx.restore()
+        // The delivery marker, pinned to the rim when it is off the dial — the same treatment the
+      // police get, and for the same reason: knowing roughly which way to go is the whole value of
+      // a map you glance at rather than read.
+      if (marker) {
+        const [mx, my] = toMap(marker.x, marker.y)
+        const md = Math.hypot(mx, my)
+        const [bx, by] = md > r - 8 ? [mx / md * (r - 8), my / md * (r - 8)] : [mx, my]
+        ctx.shadowColor = '#ffc21f'
+        ctx.shadowBlur = 12
+        ctx.fillStyle = '#ffc21f'
+        ctx.beginPath()
+        ctx.arc(bx, by, 5.5, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.shadowBlur = 0
+      }
+
+      ctx.restore()
       }
 
       if (traffic) {

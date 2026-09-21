@@ -99,6 +99,19 @@ export function createHud() {
     textShadow: SHADOW, letterSpacing: '.2px', opacity: '0', transition: 'opacity .35s',
   }, root)
 
+  // --- the objective, top left under the clock. Its own line rather than the alert channel, and
+  // the design document said the opposite before this was built.
+  //
+  // An alert is transient by construction: it fades, and it has to, because "Ran a red light" is
+  // about a moment. An objective is the opposite — "Deliver to Rue Willy Goergen" with a countdown
+  // has to be readable at any instant, including the one where the player looks up after a chase.
+  // Putting it in the alert channel meant either the objective flickering or the alerts sticking.
+  const objective = el('div', {
+    position: 'fixed', left: '24px', top: '46px', fontSize: '16px', fontWeight: '700',
+    textShadow: SHADOW, letterSpacing: '.2px', opacity: '0', transition: 'opacity .25s',
+    color: '#ffc21f',
+  }, root)
+
   // --- state line, bottom left: small, for things that are true rather than urgent.
   const state = el('div', {
     position: 'fixed', left: '24px', bottom: '22px', fontSize: '13px', fontWeight: '600',
@@ -169,7 +182,7 @@ export function createHud() {
 
   return {
     root,
-    update({gameHours, kmh, stars: level, message, fps, drifting, paused, streetName, bustProgress = 0, draws = 0, tris = 0, peds = 0, cars = 0, x = 0, y = 0, heading = 0}) {
+    update({gameHours, kmh, stars: level, message, objective: objLine = '', fps, drifting, paused, streetName, bustProgress = 0, draws = 0, tris = 0, peds = 0, cars = 0, x = 0, y = 0, heading = 0}) {
       // bustProgress is 0..1 of the way to being caught, so the bar shows what is LEFT.
       const remaining = Math.max(0, 1 - bustProgress)
       bustBox.style.opacity = bustProgress > 0.02 ? '1' : '0'
@@ -202,6 +215,12 @@ export function createHud() {
         alert.textContent = message
         alert.style.opacity = message ? '1' : '0'
       }
+
+      // The objective sits under the clock, and the debug panel moves down when both are up —
+      // found by looking, because the panel is at the same 46px and was drawing over it.
+      objective.textContent = objLine
+      objective.style.opacity = objLine ? '1' : '0'
+      fpsBox.style.top = objLine ? '74px' : '46px'
 
       state.textContent = paused ? 'PAUSED' : (drifting ? 'DRIFT' : '')
       if (showFps) {

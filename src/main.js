@@ -12,6 +12,7 @@ import {createInput} from './game/input.js'
 import {createChaseCamera, updateChase, resetChase, shakeCamera, createBirdCamera, updateBird, zoomBird, restoreUp} from './game/camera.js'
 import {createCarVisual, updateCarVisual} from './game/carvisual.js'
 import {createMinimap} from './game/minimap.js'
+import {createDelivery} from './game/delivery.js'
 import {createBigMap} from './game/bigmap.js'
 import {createFeedback} from './game/feedback.js'
 import {createPicker} from './game/picker.js'
@@ -58,7 +59,7 @@ world.parcels = city.parcels ?? []     // cut by tools/parcels.mjs; the land und
 setGroundSampler((x, y) => groundHeight(x, -y))
 setNormalSampler((x, y) => (groundNormal ? groundNormal(x, -y) : {x: 0, y: 1, z: 0}))
 boot('raising the city…')
-const {scene, camera, renderer, update, follow, resize} = createScene(world)
+const {scene, camera, renderer, update, follow, resize, setBeacon} = createScene(world)
 
 document.getElementById('app').appendChild(renderer.domElement)
 const fit = () => resize(window.innerWidth, window.innerHeight)
@@ -147,6 +148,20 @@ function rebuildTouch() {
 }
 syncTouch()
 window.matchMedia('(pointer: coarse)').addEventListener?.('change', syncTouch)
+// One delivery at a time, so the game can ask the player for something rather than only punish
+// them. See docs/delivery.md; before this the five strings it could say were all reactions to a
+// mistake.
+const delivery = createDelivery(world)
+/** The objective line, with the countdown while a job is being carried. */
+const deliveryLine = () => {
+  const d = delivery.state
+  if (d.phase === 'carrying') {
+    const s = Math.max(0, Math.ceil(d.remaining))
+    return `${d.message}   ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+  }
+  return d.message || ''
+}
+
 const chase = createChaseCamera()
 // Camera modes, cycled with C. Chase is the driving view; bird is the map view you edit in.
 const bird = createBirdCamera()
@@ -187,7 +202,15 @@ function frame(now) {
   last = now
 
   // Busted: the police have you. Same reset as a respawn, so the run simply ends and restarts.
+  //
+  // The flag is CONSUMED here, at the top of the frame, and anything downstream that wants to know
+  // has to be told by this block rather than by reading the flag. The delivery read
+  // `police.state.busted` directly at first and could never see it: cleared at line one, read at
+  // line ninety, false every time. Found by testing the failure path, which the happy path cannot
+  // reach — the delivery completed perfectly and would never have failed on an arrest.
+  let bustedThisFrame = false
   if (police.state.busted) {
+    bustedThisFrame = true
     police.state.busted = false
     const s = spawnPoint()
     car.x = s.x; car.y = s.y; car.heading = s.heading
@@ -272,6 +295,11 @@ function frame(now) {
     // cars you could not see and running over pedestrians who were not there — so when the toggle is
     // off their simulation does not run at all, and the police are handed an empty crowd and no
     // traffic, so nothing can be hit, yielded to, or charged as a crime.
+    // The delivery, before the crowd so its marker is this frame's. Stepped with whether the
+    // police have just taken the player, which is the only outside thing that can fail a job.
+    delivery.update(dt, car, bustedThisFrame)
+    setBeacon(delivery.marker())
+
     if (crowdsOn) crowd.update(dt, car, clock, chase.ready ? chase : null)
     clock += dt
     // The crowd is passed in so traffic can knock people over. It updates BEFORE this call, so
@@ -289,7 +317,7 @@ function frame(now) {
   if (CAM_MODES[camMode] === 'bird') updateBird(bird, car, camera, dt)
   else updateChase(chase, car, camera, dt, world)
   bigmap.update(car, police, crowdsOn ? traffic : null)
-  minimap.update(dt, car, police, crowdsOn ? traffic : null)
+  minimap.update(dt, car, police, crowdsOn ? traffic : null, delivery.marker())
   update(dt, gameHours)
   renderer.render(scene, camera)
 
@@ -315,6 +343,7 @@ function frame(now) {
     peds: crowdsOn ? crowd.peds.length : 0,
     cars: crowdsOn ? traffic.cars.length : 0,
     streetName: car.leaving ? 'The forest — turn back' : (car.road?.name ?? null),
+    objective: deliveryLine(),
     paused: held.paused,
     x: car.x, y: car.y, heading: car.heading,
   })
@@ -336,4 +365,4 @@ requestAnimationFrame(frame)
 
 // Handy while tuning, and harmless in the build: the console can reach the car.
 window.game = {THREE, scene, camera, renderer, picker, updates, touch: () => touchUI, wantsTouch, setTouchLayout: (v) => touchActs.layout(v), car, world, bird,
-  camMode: () => CAM_MODES[camMode], setCamMode: (m) => { const i = CAM_MODES.indexOf(m); if (i < 0) return false; camMode = i; if (m !== 'bird') { restoreUp(camera); resetChase(chase) } else bird.ready = false; return true }, input, chase, crowd, police, traffic, audio, signals, minimap, carVisual, setHours: h => { gameHours = h }}
+  camMode: () => CAM_MODES[camMode], setCamMode: (m) => { const i = CAM_MODES.indexOf(m); if (i < 0) return false; camMode = i; if (m !== 'bird') { restoreUp(camera); resetChase(chase) } else bird.ready = false; return true }, input, chase, crowd, police, traffic, audio, signals, minimap, carVisual, delivery, setHours: h => { gameHours = h }}
