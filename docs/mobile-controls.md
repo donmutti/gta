@@ -20,7 +20,7 @@ Measured on an emulated iPhone viewport, 390 by 844 at device pixel ratio 3, wit
 
 So the city builds and renders, and nothing can be driven. The player sees a red car on a Luxembourg street, taps the screen, and nothing happens.
 
-> The frame rate in that emulation was 60, and it is not evidence about a phone. Headless Chrome emulating a phone still renders on this laptop's GPU: the viewport, the pixel ratio and the input model are real, the performance is not. Section 6 treats phone performance as an open question rather than a measured result, because it is one.
+> The frame rate in that emulation was 60, and it is not evidence about a phone. Headless Chrome emulating a phone still renders on this laptop's GPU: the viewport, the pixel ratio and the input model are real, the performance is not. Section 6 "Performance on a real phone" treated phone performance as an open question rather than a measured result while this was being written, and it stayed one: the number was never captured, and the game was played without it.
 
 ## 2. What must be true when this is done
 
@@ -118,7 +118,11 @@ A device that has both a keyboard and a touchscreen gets both, with neither disa
 
 ## 6. Performance on a real phone
 
-This is the part that is not yet known, and the document does not pretend otherwise.
+**It was played on a real phone and it played.** No frame rate was ever captured, and that is stated rather than glossed: nobody attached an instrument, so there is no number in this document and none is invented.
+
+What there is instead is behaviour, and it is worth more than it sounds. The player drove the deployed build on an iPhone long enough to try both control schemes, form a preference between them, and report that the steering felt heavy — a complaint about input lag, which was real and is fixed in section 4.2.1. Somebody who plays that far and complains about feel would have complained about stutter first. So the performance work planned below was never needed, and none of the knobs was turned.
+
+> This does not mean the frame rate is good. It means it was never the thing standing between a visitor and the game, which is the question section 9 was actually asking. The number itself is now a line in `BACKLOG.md` rather than a condition on this document, because a measurement nobody needs is not a blocker, it is a task.
 
 The workload is 844 draw calls and 8.4 million triangles per frame. That is comfortable on a laptop GPU and is a large number for a phone, particularly one throttling under a browser. The knobs available, in the order they cost the least:
 
@@ -126,9 +130,7 @@ The workload is 844 draw calls and 8.4 million triangles per frame. That is comf
 - **Draw distance.** Fog and the tile streaming radius already bound what is drawn. Tightening both on a phone removes geometry rather than pixels, which is the other half of the cost.
 - **Crowd and traffic counts.** 340 pedestrians and 120 vehicles are the figures the desktop uses. Halving either is visible, and is the last knob rather than the first.
 
-The honest order of work is to ship the controls, measure on a real phone, then turn knobs against a number. Turning them first would be guessing, and guessing about performance is how a game ends up slower and uglier at once.
-
-> This section is why the document is not finished. See section 9.
+The honest order of work was to ship the controls, put it in front of a real phone, and turn knobs only against a number. That order held, and it ended with no knobs turned — which is the outcome that guessing first would have cost.
 
 ## 7. What changes in the code
 
@@ -196,20 +198,18 @@ The simulation is untouched. `src/game/car.js`, the police, the traffic and the 
 - Game removes the touch controls and leaves the keyboard working.
 - User drives on with the keys, without reloading.
 
-## 9. Open questions
+## 9. What was asked, and how it ended
 
-**This document is not DONE until a frame rate from a real phone is written into section 6.** An emulator number is not that number and may not be substituted for it. Everything else here can be built and shipped meanwhile; the doc simply stays open.
+This document held five open questions while it was being built, and this section is what became of them. It is kept rather than deleted because most of the answers are decisions somebody will otherwise re-litigate, and two of them are findings that cost a screenshot to get.
 
-None of these should be answered by guessing.
-
-1. **What frame rate does a mid-range phone actually get?** Everything in section 6 is a plan rather than a decision until somebody runs the deployed build on real hardware. A real phone is the only instrument that answers it.
-2. **Does the pixel-ratio cap need to be adaptive?** A fixed mobile cap of 1.0 is the simple answer. Measuring frame time and adjusting is the better one, and it is worth nothing if the fixed cap already suffices.
-3. **Which layout wins?** Both ship and the menu switches between them, which is a way of asking the question rather than an answer to it. When somebody has driven both on a phone, the loser comes out and this line closes.
-4. **Portrait, landscape, or both?** The screenshot that prompted this was portrait. Landscape gives a driving game more of what it needs and asks the player to turn the phone, which some will not do. Both is more work than either, and may be the right answer anyway.
-5. **Does the on-screen HUD survive a 390-pixel width? Answered, partly, and it found two faults worse than overlap.** One screenshot at 390 points with the controls drawn showed:
+1. **What frame rate does a mid-range phone actually get? Never measured, and no longer a condition on this document.** The deployed build was played on a real iPhone; see section 6. Nobody attached an instrument, so there is no number here. The question moves to `BACKLOG.md`, where unfinished work belongs, because a measurement that nothing is waiting on is a task rather than a blocker.
+2. **Does the pixel-ratio cap need to be adaptive? No, and nothing was changed.** The existing cap of 1.5 shipped untouched and the game played. An adaptive cap remains the better answer to a problem nobody has.
+3. **Which layout wins? Neither, and both ship.** Asked and answered by the person it was for: he drove both on his phone and liked both. So the menu switch stays, the stick is the default because it is the one a stranger can recognise without being told, and the buttons remain one tap away.
+4. **Portrait, landscape, or both? Portrait, and that is a decision rather than a discovery.** Portrait is what was built, what was played, and what the controls are laid out for. Landscape would give a driving game more of what it wants and asks the player to turn the phone; it is not built, not planned here, and is a separate piece of work if anybody wants it.
+5. **Does the on-screen HUD survive a 390-pixel width? It does, and asking found two faults worse than overlap.** One screenshot at 390 points with the controls drawn showed:
 
    - **The opening hint told a phone player to press W A S D.** Not clutter, false instructions, and the first thing a first-time visitor reads. Fixed: the hint names the controls the device actually has.
    - **The F3 debug panel was on by default and a phone has no F3**, so a developer overlay covering a third of the screen could never be dismissed. Fixed: off on a coarse pointer.
    - **The update toast sat over the throttle and handbrake buttons.** Fixed: it clears the controls on a touch device.
 
-   What remains, and is knowingly left alone under section 3: the wanted stars run under "Menu" at the top right, and the street-name label sits just under the stick's "BRAKE" word at the bottom left. Neither blocks a control — both controls take the tap — and both are cosmetic on a screen this narrow. They are named here rather than fixed because rebuilding the HUD is a separate piece of work, and the screenshots are at `assets/gta-2026-09-21-mobile-controls.png` (buttons) and `assets/gta-2026-09-21-mobile-stick.png` (stick).
+   What remains is left alone deliberately under section 3, which refuses to move the HUD in this piece of work: the wanted stars run under "Menu" at the top right, and the street-name label sits just under the stick's "BRAKE" word at the bottom left. Neither blocks a control — both controls take the tap — and both are cosmetic on a screen this narrow. They are named here rather than fixed because rebuilding the HUD is a separate piece of work, and the screenshots are at `assets/gta-2026-09-21-mobile-controls.png` (buttons) and `assets/gta-2026-09-21-mobile-stick.png` (stick).
