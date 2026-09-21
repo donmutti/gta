@@ -7,6 +7,16 @@
 
 const STEER_ON = 7.0    // how fast the command approaches full lock while held
 const STEER_OFF = 11.0  // how fast it returns to centre when let go
+/**
+ * How fast the command follows a THUMBSTICK, which is a different question entirely.
+ *
+ * A stick reports a position, so in principle it needs no smoothing at all and the right number
+ * here is infinity. It gets a little anyway, because a thumb resting on glass is never quite
+ * still and a completely unfiltered stick transmits that as a shimmy in the steering. At 30 the
+ * command is 95 per cent of the way there in a tenth of a second, which is below what a hand
+ * notices, where the keyboard's ramp takes a third of a second by design.
+ */
+const TOUCH_STEER = 30
 
 export function createInput() {
   const down = new Set()
@@ -16,6 +26,9 @@ export function createInput() {
   // the steering ramp for free and the two inputs sum rather than fight, which is what a laptop
   // with a touchscreen needs.
   const touch = {throttle: 0, steer: 0, handbrake: false}
+  // Tracked apart, because they are ramped apart: see the comment in sample().
+  let keySteer = 0
+  let touchSteer = 0
   const state = {throttle: 0, steer: 0, handbrake: false, respawn: false, paused: false,
                  mapToggle: false, mapClose: false,
                  fbToggle: false, fbClose: false, fbPick: null,
@@ -57,10 +70,24 @@ export function createInput() {
       const back = held('KeyS', 'ArrowDown') ? 1 : 0
       state.throttle = clamp(fwd - back + touch.throttle)
 
-      const want = clamp((held('KeyA', 'ArrowLeft') ? 1 : 0) - (held('KeyD', 'ArrowRight') ? 1 : 0) + touch.steer)
-      const rate = want === 0 ? STEER_OFF : STEER_ON
-      state.steer += (want - state.steer) * Math.min(1, rate * dt)
-      if (want === 0 && Math.abs(state.steer) < 0.01) state.steer = 0
+      // THE RAMP BELONGS TO THE KEYBOARD, AND ONLY TO IT.
+      //
+      // A key is a switch: it says "left", not "how far left". The ramp is what turns that switch
+      // into a progressive turn, and without it the keyboard would snap to full lock. A thumbstick
+      // is not a switch — the thumb has ALREADY said how far — so running the same ramp over it
+      // adds a third of a second of lag to a command that was exact when it arrived. Reported from
+      // a phone as the car waddling: the finger moves, the car thinks about it.
+      //
+      // So the two are tracked separately and summed. The keys keep their ramp; the stick is
+      // followed almost directly, with just enough smoothing to take the noise off a thumb resting
+      // on glass.
+      const keyWant = (held('KeyA', 'ArrowLeft') ? 1 : 0) - (held('KeyD', 'ArrowRight') ? 1 : 0)
+      const rate = keyWant === 0 ? STEER_OFF : STEER_ON
+      keySteer += (keyWant - keySteer) * Math.min(1, rate * dt)
+      if (keyWant === 0 && Math.abs(keySteer) < 0.01) keySteer = 0
+      touchSteer += (touch.steer - touchSteer) * Math.min(1, TOUCH_STEER * dt)
+      if (touch.steer === 0 && Math.abs(touchSteer) < 0.01) touchSteer = 0
+      state.steer = clamp(keySteer + touchSteer)
 
       state.handbrake = held('Space') || touch.handbrake
       return state

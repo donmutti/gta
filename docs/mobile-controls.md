@@ -60,6 +60,18 @@ So each axis is computed from its own displacement and clamped on its own: full 
 
 A deadzone of 14 percent of the throw is ignored on each axis so a resting thumb commands nothing, and the remaining throw is **rescaled** rather than truncated: without the rescale, the first responsive millimetre already commands 0.14 and the control starts with a step in it.
 
+### 4.2.1. The keyboard's steering ramp does not apply to a stick, and assuming it did was a bug
+
+The first version fed touch steering through `STEER_ON` and `STEER_OFF` in `src/game/input.js`, on the grounds that sharing the ramp made the feel identical on both inputs. That was wrong, and it came back from a phone as the car waddling: the finger moves and the car thinks about it.
+
+A key is a switch. It says "left", not "how far left", and the ramp is the thing that turns that switch into a progressive turn — without it the keyboard would snap to full lock the instant a key went down. A thumbstick has already answered "how far", so running it through the same ramp is a third of a second of lag applied to a command that was exact when it arrived.
+
+The two are tracked separately and summed now, so the keys keep their ramp and the stick is followed almost directly. Almost rather than exactly: a thumb resting on glass is never quite still, and a completely unfiltered stick transmits that as a shimmy in the steering.
+
+| time to 90 per cent of full lock | before | after |
+|---|---|---|
+| thumbstick | 332 ms | 83 ms |
+
 ### 4.3. The handbrake is a button, because a handbrake has no axis
 
 "Drift" sits bottom right, under the right thumb, so throttle and steering stay with the left thumb and the handbrake is stabbed with the other hand. That combination is how the car drifts, and a scheme that makes it awkward removes the best thing in the game.
