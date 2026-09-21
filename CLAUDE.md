@@ -28,6 +28,24 @@ The dev server is on **port 5199** (not Vite's default 5173 — that port is tak
 - `src/render/*.js` — the asset modules, each built by a dedicated session (see below): `car.js` (4 vehicle types + fleet), `decor.js` (cafes, postboxes, monuments, steps, cathedral, Gëlle Fra, roadworks, neon, signals), `townhouse.js`, `streetprops.js`, `parks.js`, `airport.js`, `critters.js`, `eastereggs.js`.
 - `src/game/*.js` — the simulation: `car.js` physics, `camera.js` chase cam (with camera-collision so it never sits inside a building), `pedestrians.js`, `traffic.js`, `police.js`, `signals.js`, `minimap.js`, `hud.js`, `audio.js`.
 
+### The words for the things
+
+These are the owner's words and the code's words, and they are the same words. Written down because the two nearly diverged: he described a change as "heat between 0 and 1 stars" and it was only luck that the code already called it that.
+
+| Term | What it is |
+|---|---|
+| `heat` | the continuous meter the police keep on the player. Invisible. |
+| `stars` | the discrete surfacing of heat, `floor(heat / 30)`. **The only part a player sees.** |
+| `CRIME` | the divisor every crime's heat passes through. Raising it widens the grace band below one star. |
+| the grace band | heat below one star, where nothing responds and the meter does not drain |
+| the standing force | the thirty police cars planted at start. Parked, always on the map, never removed, and the **only** source of pursuit. |
+| the beacon | the column of light on the delivery's active point. Drawn through the city, so it gives a bearing and never a route. |
+| the marker | the same point on the minimap |
+| the objective line | the gold line under the clock: the destination and the countdown |
+| pickup / drop | the two ends of a delivery, each a point on a named street |
+
+> A delivery is addressed by street name because the game already prints the name of the road you are on. The player it was built for navigated by the beacon and never used a name — that is measured rather than assumed, and the names have not been removed.
+
 ### The coordinate law (used EVERYWHERE)
 The map is XY with +Y north. The Three.js ground is XZ. The mapping, in every file:
 ```
