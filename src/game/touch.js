@@ -27,6 +27,9 @@ const STICK_DEAD = 0.14      // fraction of the throw ignored, so a resting thum
 const PAD_FULL_LOCK = 0.33   // buttons layout: fraction of screen width that means full lock
 const LAYOUT_KEY = 'gta.touchLayout'
 
+
+import {fullscreenAvailable} from './fullscreen.js'
+
 /** Is this a device that wants touch controls? Primary pointer, deliberately: see the design. */
 export function wantsTouch() {
   return window.matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0
@@ -230,6 +233,10 @@ export function createTouchControls(input, acts = {}, layout = touchLayout()) {
     Pause: item('Pause'),
     Layout: item(stickMode ? 'Controls: Stick' : 'Controls: Buttons'),
   }
+  // Only where there is an API to call. An iPhone has none, and a menu item that does nothing is
+  // worse than a missing one: the player taps it, nothing happens, and they conclude the game is
+  // broken rather than that their browser does not do this.
+  if (fullscreenAvailable()) items.Fullscreen = item('Fullscreen')
   document.body.appendChild(root)
 
   const onMove = (e) => {
@@ -281,6 +288,7 @@ export function createTouchControls(input, acts = {}, layout = touchLayout()) {
   // mid-drive, and a reload would dump them back at the spawn point to answer a question about
   // where the throttle should live.
   tap(items.Layout, () => acts.layout?.(stickMode ? 'buttons' : 'stick'))
+  if (items.Fullscreen) tap(items.Fullscreen, () => acts.fullscreen?.())
 
   return {
     layout: stickMode ? 'stick' : 'buttons',

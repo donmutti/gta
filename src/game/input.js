@@ -32,7 +32,7 @@ export function createInput() {
   const state = {throttle: 0, steer: 0, handbrake: false, respawn: false, paused: false,
                  mapToggle: false, mapClose: false,
                  fbToggle: false, fbClose: false, fbPick: null,
-                 camToggle: false}
+                 camToggle: false, fullscreenToggle: false}
 
   const isKey = (e, ...names) => names.includes(e.code)
   const onDown = (e) => {
@@ -46,6 +46,8 @@ export function createInput() {
     if (e.code === 'Escape') state.mapClose = true
     // Feedback dialog: 0 toggles, Esc closes, and the number keys file a report while it is up.
     if (e.code === 'KeyC' && !e.repeat) state.camToggle = true
+    // Plain F, because Shift+F is already the debug panel and a phone has no keyboard at all.
+    if (e.code === 'KeyF' && !e.shiftKey && !e.repeat) state.fullscreenToggle = true
     if (e.code === 'Digit0' && !e.repeat) state.fbToggle = true
     if (e.code === 'Escape') state.fbClose = true
     if (!e.repeat && /^Digit[1-5]$/.test(e.code)) state.fbPick = e.code
@@ -100,6 +102,7 @@ export function createInput() {
     takeFbClose() { const r = state.fbClose; state.fbClose = false; return r },
     takeFbPick() { const r = state.fbPick; state.fbPick = null; return r },
     takeCamToggle() { const r = state.camToggle; state.camToggle = false; return r },
+    takeFullscreenToggle() { const r = state.fullscreenToggle; state.fullscreenToggle = false; return r },
     dispose() {
       window.removeEventListener('keydown', onDown)
       window.removeEventListener('keyup', onUp)

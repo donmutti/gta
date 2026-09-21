@@ -17,7 +17,7 @@ npm run smoke        # headless-Chrome check: fails on any thrown exception OR a
 npm run smoke -- --prod   # build, preview dist, and smoke that
 ```
 
-The dev server is on **port 5199** (not Vite's default 5173 — that port is taken by another project on this machine). Controls: WASD/arrows to drive, Space handbrake, R respawn, P pause, **M full-screen map** (M or Esc closes it; the world freezes and goes silent while it is up). Debug hooks on `window.game` (car, world, police, traffic, etc.) and `window.__forceHours = <0..24>` to freeze the clock.
+The dev server is on **port 5199** (not Vite's default 5173 — that port is taken by another project on this machine). Controls: WASD/arrows to drive, Space handbrake, R respawn, P pause, **M full-screen map** (M or Esc closes it; the world freezes and goes silent while it is up), **F fullscreen** (absent on iPhone, which has no Fullscreen API). Debug hooks on `window.game` (car, world, police, traffic, etc.) and `window.__forceHours = <0..24>` to freeze the clock.
 
 ## Architecture at a glance
 
@@ -70,5 +70,5 @@ All four drive headless Chrome over CDP. **Every one of them traps `process.on('
 
 - **The car does not drive on the terrain.** The heightfield is built and switched off (see above). Reviving it means the car reading `groundHeight` for its Y and tilting to `groundNormal` on slopes, and `stepCar` collision reading ground height. That is the one unfinished piece of the terrain work.
 - **NPC tail lamps carry no emissive.** The trim mesh is one vertex-coloured material and `emissive` is a uniform, so lit lamps would need another InstancedMesh per body type. At night they read as dark blocks. The hero car is unaffected.
-- **Only the player breaks things.** Traffic and pedestrians pass through destructible props. There is no sound on a break either — the feedback is the existing impact shake.
+- **Traffic and pedestrians still pass through destructible props**, and there is no sound on a break — the feedback is the existing impact shake. Vehicles DO knock pedestrians over now, each using its own measured box from `src/game/vehicles.js`, and they brake hard for anybody in their path.
 - **`BACKLOG.md`** holds the remaining ideas.

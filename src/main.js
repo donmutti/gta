@@ -17,6 +17,7 @@ import {createFeedback} from './game/feedback.js'
 import {createPicker} from './game/picker.js'
 import {createUpdateCheck} from './game/update.js'
 import {createTouchControls, wantsTouch, touchLayout, rememberLayout} from './game/touch.js'
+import {toggleFullscreen, fullscreenAvailable} from './game/fullscreen.js'
 import {createAudio} from './game/audio.js'
 import {createHud} from './game/hud.js'
 import {createPedestrians} from './game/pedestrians.js'
@@ -130,6 +131,7 @@ const touchActs = {
   respawn: () => { input.state.respawn = true },
   pause: () => { input.state.paused = !input.state.paused },
   layout: (next) => { layout = next; rememberLayout(next); rebuildTouch() },
+  fullscreen: () => toggleFullscreen(),
 }
 const syncTouch = () => {
   const want = wantsTouch()
@@ -207,6 +209,7 @@ function frame(now) {
   if (input.takeMapClose()) bigmap.close()
   // Feedback dialog on 0: same freeze as the map, because you are reporting the spot you are
   // standing in and the world drifting away underneath would defeat the point.
+  if (input.takeFullscreenToggle()) toggleFullscreen()
   if (input.takeCamToggle()) {
     camMode = (camMode + 1) % CAM_MODES.length
     // The bird camera points its up vector at north; every other mode assumes world up, so it is

@@ -97,18 +97,19 @@ const CROSS_CHANCE = 0.06
 const LENS_RADIUS = 4.6
 /** Shoulder to shoulder. Closer than this and two people are occupying each other. */
 const PERSONAL = 0.85
+/** Seconds of lookahead. Two people converging further off than this are not a problem yet. */
+const HORIZON = 2.2
 /**
- * How far ahead somebody looks before easing off for what is in front of them.
+ * How far away another person is worth thinking about at all.
  *
- * Measured rather than chosen twice over. At 2.6m with a three-quarter slowdown, a fifth of the
- * crowd was crawling and the mean pace fell from 1.05 to 0.84, which reads as a city wading
- * through treacle — and it made the overlapping worse, because people who slow down bunch up.
- * Easing off by under half, and only for somebody nearly straight ahead, is the version that
- * looks like courtesy rather than congestion.
+ * It is a radius for the neighbour search, not the avoidance rule itself: the rule is a
+ * prediction, and what it needs from this constant is only that nobody who matters is missed.
+ * Generous enough to catch somebody two seconds away at walking pace, and no more, because this
+ * is the loop that runs 340 times a frame.
  */
-const LOOKOUT = 2.2
-/** Metres per second of sideways step out of somebody's way. A brisk shoulder turn, not a dive. */
-const SIDESTEP = 1.6
+const LOOKOUT = 4.0
+/** Metres per second of sideways drift out of somebody's way. A lean, not a dive. */
+const SIDESTEP = 1.5
 
 // --- the skeleton ------------------------------------------------------------------------------
 // Heights in metres for a 1.75m reference adult, measured from the sole. Everybody is this figure
@@ -484,42 +485,85 @@ export function createPedestrians(world, scene, signals) {
   }
 
   /**
-   * Keep people out of each other, and have them see it coming.
+   * Keep people out of each other, and — the part that matters — see it coming.
    *
-   * Two separate behaviours that a crowd needs together and which look wrong apart. SEPARATION is
-   * a push out of somebody else's personal space, and on its own it produces people who walk into
-   * each other and then shove apart. ANTICIPATION is slowing down for somebody in front before
-   * reaching them, and on its own it produces people who stop politely and then walk through each
-   * other anyway.
+   * The first version of this was reactive: a push that fired once two people were already inside
+   * each other. That is not what a pavement looks like. People do not avoid collisions by being
+   * shoved apart on contact, and they do not avoid them by everybody happening to pick the correct
+   * side either. They watch somebody approach, work out a second or two early that the two paths
+   * cross, and drift a little sideways long before anything would have touched. By the time they
+   * pass, there was never a near miss to see.
    *
-   * Both are steering rather than state: computed fresh each frame, applied through velocity, with
-   * nothing accumulated between frames. That is deliberate after watching a stored offset diverge
-   * to a quarter of a million metres in the traffic file earlier tonight — a term that cannot
-   * accumulate cannot run away.
+   * So the test here is a PREDICTION rather than a distance. For each neighbour, the relative
+   * velocity gives the time of closest approach and how close that approach will be:
+   *
+   *   p = their position - mine        v = their velocity - mine
+   *   t* = -(p . v) / |v|^2            miss = |p + v t*|
+   *
+   * A `t*` in the future with a `miss` inside personal space is a collision that has not happened
+   * yet, and it is answered by a sideways drift whose urgency rises as `t*` falls. Two people
+   * walking straight at each other both drift, both drift consistently (the side is chosen from
+   * the geometry, not at random, so it does not dither), and neither ever gets close enough to
+   * need the shove.
+   *
+   * The contact push is kept underneath it as a backstop, for the cases prediction cannot help
+   * with: somebody stepping out of a doorway, a person standing still in a stream, a knot that has
+   * already formed.
+   *
+   * Everything is steering rather than state — recomputed each frame, applied through an offset
+   * that decays on its own. Nothing accumulates, so nothing can run away.
    */
   function avoid(ped, dt) {
     let px = 0, py = 0, slow = 1
     const wx = Math.cos(ped.heading), wy = Math.sin(ped.heading)
+    const speed = ped.pace * ped.gait
+    const vx = wx * speed, vy = wy * speed
     eachNear(ped, LOOKOUT, (other) => {
-      const dx = ped.x - other.x, dy = ped.y - other.y
-      const d2 = dx * dx + dy * dy
+      const rx = other.x - ped.x, ry = other.y - ped.y
+      const d2 = rx * rx + ry * ry
       if (d2 > LOOKOUT * LOOKOUT || d2 < 1e-6) return
       const d = Math.sqrt(d2)
+
+      // --- the backstop: already too close, whatever either of them intended.
       if (d < PERSONAL) {
-        // Falls off with distance, so a brush is a nudge and a collision is a shove.
         const push = (PERSONAL - d) / PERSONAL
-        px += (dx / d) * push
-        py += (dy / d) * push
+        px -= (rx / d) * push
+        py -= (ry / d) * push
       }
-      // AHEAD, and how directly. Somebody off to the side at the same distance is not in the way,
-      // and slowing for them is what makes a crowd look like it is wading through treacle.
-      const ahead = (-dx * wx - dy * wy) / d
-      if (ahead > 0.55 && d < LOOKOUT) {
-        const near = 1 - (d - PERSONAL) / (LOOKOUT - PERSONAL)
-        const want = 1 - 0.45 * Math.max(0, Math.min(1, near)) * ahead
+
+      // --- the prediction. Somebody standing still still counts: their velocity is simply zero,
+      // and walking into a stationary person is the commonest collision on a pavement.
+      const os = other.pace * (other.gait ?? 1)
+      const dvx = Math.cos(other.heading) * os - vx
+      const dvy = Math.sin(other.heading) * os - vy
+      const vv = dvx * dvx + dvy * dvy
+      if (vv < 1e-6) return                       // walking in step; they will never converge
+      const t = -(rx * dvx + ry * dvy) / vv
+      if (t <= 0 || t > HORIZON) return           // behind, or too far off to be worth a thought
+      const mx = rx + dvx * t, my = ry + dvy * t
+      const miss = Math.hypot(mx, my)
+      if (miss >= PERSONAL) return                // they will pass cleanly; do nothing at all
+
+      // Which way to lean. The cross product of where I am going with where they are says which
+      // side they are on, so I go the other way — and because both people compute it from the same
+      // geometry rather than by guessing, they lean apart rather than into each other.
+      const side = (wx * ry - wy * rx) > 0 ? -1 : 1
+      // Urgency: strongest when the moment is close and the miss is small. Squared in time, so
+      // the drift starts as a suggestion at two seconds out and is firm at half a second.
+      const near = 1 - t / HORIZON
+      const urgency = near * near * (1 - miss / PERSONAL)
+      px += -wy * side * urgency
+      py += wx * side * urgency
+
+      // And ease off a little if the crossing is nearly head on, where sidestepping alone cannot
+      // open enough room. Not much: people who brake for every passer-by look like congestion.
+      const closing = -(rx * dvx + ry * dvy) / (d * Math.sqrt(vv))
+      if (closing > 0.8) {
+        const want = 1 - 0.45 * urgency
         if (want < slow) slow = want
       }
     })
+
     // INTO THE OFFSET, not into the position, and this is the whole correctness of it.
     //
     // `place()` rewrites x and y from the path every single frame, so a sidestep written straight
