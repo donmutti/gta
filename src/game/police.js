@@ -53,6 +53,20 @@ const BUST_SPEED = 4.17
  */
 const BUST_RECOVERY = 0.8
 const MAX_STARS = 5
+/**
+ * Every crime's heat, divided by this before it lands.
+ *
+ * A knockdown used to add 34 against a first-star threshold of 30, so **one accidental pedestrian
+ * made you wanted** — which is what the owner reported after playing it: "you run people over
+ * accidentally all the time". He asked for a grace band rather than a gentler ramp: below one
+ * star nothing responds at all, and it should take roughly ten knockdowns to get there.
+ *
+ * Dividing every crime by ten rather than lowering the knockdown alone is deliberate. Knocking a
+ * person down at 3 while a red light still cost 18 would make a traffic signal six times graver
+ * than a human being, which is a proportion nobody asked for and nobody would defend. One factor
+ * on all of them keeps every crime worth exactly what it was worth relative to the others.
+ */
+const CRIME = 10
 /** How close a cop must be to see you at all. */
 const SIGHT = 85
 /** Cops re-path on a timer, never per frame — the graph search is the one thing here that is not free. */
@@ -89,6 +103,31 @@ export function createPolice(world, scene, makeCar, signals) {
     state.message = text
     state.messageFor = seconds
   }
+
+  /**
+   * The standing force: a fixed number of police cars planted across the city at start, parked,
+   * always on the map, and never removed.
+   *
+   * The owner's design, and his reason: a player should be able to SEE where the danger is and
+   * drive around it, rather than being caught by an ambush they could not have anticipated. Before
+   * this, pursuit was conjured — `dispatch()` put a car 45 to 75 metres behind the player, already
+   * at the player's speed, at the instant a star landed. Nothing to see coming and nothing to
+   * avoid.
+   *
+   * THE STANDING FORCE IS THE SOURCE OF PURSUIT, and that is the whole of why it is worth having.
+   * Thirty visible cars beside a thirty-first that is still conjured would be decoration: the
+   * player would route around every dot on the map and be ambushed anyway, which is worse than
+   * today because it teaches that the map is reliable and then breaks it.
+   *
+   * The price, stated rather than discovered: thirty cars over 2,872 by 3,300 metres is a mean
+   * spacing of 562 metres, so the nearest responder now starts several hundred metres away and
+   * from rest, where it used to arrive at 45 metres already moving. Chases are markedly easier.
+   * That is what was asked for.
+   *
+   * A parked cop costs a position and a dot. Only a responding one runs the car model, so the
+   * frame cost is what it always was until somebody is actually being chased.
+   */
+  const STANDING = 30
 
   function spawnCop(x, y, heading) {
     const car = createCar(x, y, heading)
@@ -142,26 +181,51 @@ export function createPolice(world, scene, makeCar, signals) {
     return player.heading + Math.PI
   }
 
+  /**
+   * Plant the standing force on a grid across the city, each car snapped to the nearest road.
+   *
+   * A grid rather than random points, because "uniformly across the city" is what was asked for
+   * and thirty random draws clump. The jitter keeps them off a visible lattice.
+   */
+  function plantStandingForce() {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+    for (const e of world.edges) for (const [x, y] of e.pts) {
+      if (x < minX) minX = x; if (x > maxX) maxX = x
+      if (y < minY) minY = y; if (y > maxY) maxY = y
+    }
+    const cols = Math.ceil(Math.sqrt(STANDING * (maxX - minX) / Math.max(1, maxY - minY)))
+    const rows = Math.ceil(STANDING / cols)
+    let n = 0
+    for (let r = 0; r < rows && n < STANDING; r++) {
+      for (let c = 0; c < cols && n < STANDING; c++) {
+        const fx = (c + 0.5) / cols, fy = (r + 0.5) / rows
+        const jx = (Math.random() - 0.5) * (maxX - minX) / cols * 0.5
+        const jy = (Math.random() - 0.5) * (maxY - minY) / rows * 0.5
+        const on = snapToRoad(minX + fx * (maxX - minX) + jx, minY + fy * (maxY - minY) + jy)
+        if (!on) continue
+        const cop = spawnCop(on.x, on.y, on.heading)
+        cop.standing = true          // never retired, and parked until a star lands
+        n++
+      }
+    }
+    return n
+  }
+
   /** Put a cop on a street near the player, from whichever side their star level warrants. */
   function dispatch(player) {
-    const behind = approachAngle(player, state.stars + 1)
-    // Close enough to be a threat, far enough to be a surprise. Spawned at 70-120m and from rest,
-    // a cop measured 89m back doing 5.6 m/s after three seconds — never catching anyone, which is
-    // a chase in name only. They now arrive already moving, at the speed of traffic.
-    const dist = 45 + Math.random() * 30
-    const on = snapToRoad(player.x + Math.cos(behind) * dist, player.y + Math.sin(behind) * dist)
-    if (!on) return
-    // Face along the road, in whichever direction points at the player.
-    const toPlayer = Math.atan2(player.y - on.y, player.x - on.x)
-    let d = toPlayer - on.heading
-    while (d > Math.PI) d -= Math.PI * 2
-    while (d < -Math.PI) d += Math.PI * 2
-    const heading = Math.abs(d) > Math.PI / 2 ? on.heading + Math.PI : on.heading
-    const cop = spawnCop(on.x, on.y, heading)
-    const roll = Math.max(Math.abs(player.speed), 12)
-    cop.car.vx = Math.cos(heading) * roll
-    cop.car.vy = Math.sin(heading) * roll
-    cop.car.speed = roll
+    // NOTHING IS CONJURED. The nearest standing car that is not already chasing starts moving,
+    // so what comes for the player is a car that was on the map before the crime.
+    let best = null, bestD = Infinity
+    for (const cop of cops) {
+      if (cop.chasing) continue
+      const d = Math.hypot(cop.car.x - player.x, cop.car.y - player.y)
+      if (d < bestD) { bestD = d; best = cop }
+    }
+    if (!best) return
+    best.chasing = true
+    // From rest, on the road it was parked on. The old version handed a conjured car the player's
+    // own speed because it appeared behind them and would otherwise never catch up; a car that was
+    // already there does not need the gift.
     say('WANTED — police responding')
   }
 
@@ -187,6 +251,8 @@ export function createPolice(world, scene, makeCar, signals) {
     stepCar(cop.car, input, dt, world, scratch)
   }
 
+  plantStandingForce()
+
   return {
     state,
     cops,
@@ -202,7 +268,7 @@ export function createPolice(world, scene, makeCar, signals) {
       // passed in as `car` when it steps. It matters now that buses can knock people over too.
       ped.hitBy = {vx: player.vx, vy: player.vy, speed: player.speed}
       state.knocked++
-      state.heat += 34
+      state.heat += 34 / CRIME
       say('You knocked someone over!')
     },
 
@@ -248,9 +314,9 @@ export function createPolice(world, scene, makeCar, signals) {
 
       // Crime 2: driving where people walk. Cheap to check and it makes the pedestrian streets of
       // Ville-Haute mean something, which is why they were kept drivable.
-      if (player.road?.pedestrianZone && Math.abs(player.speed) > 6) state.heat += 14 * dt
+      if (player.road?.pedestrianZone && Math.abs(player.speed) > 6) state.heat += 14 * dt / CRIME
       // Crime 3: speed, but only once they already care.
-      if (state.stars > 0 && Math.abs(player.speed) > SPEEDING) state.heat += 3 * dt
+      if (state.stars > 0 && Math.abs(player.speed) > SPEEDING) state.heat += 3 * dt / CRIME
 
       // Crime 4: running a red. Charged ONCE per junction as the car crosses the stop line, not
       // continuously — a per-frame charge would fine you for the whole time you sat in the box.
@@ -260,7 +326,7 @@ export function createPolice(world, scene, makeCar, signals) {
         if (ahead && ahead.light === RED && ahead.dist < 6 && Math.abs(player.speed) > 4) {
           if (lastRed !== ahead.junction.id) {
             lastRed = ahead.junction.id
-            state.heat += 18
+            state.heat += 18 / CRIME
             say('Ran a red light')
           }
         } else if (ahead && ahead.dist > 20) {
@@ -282,7 +348,14 @@ export function createPolice(world, scene, makeCar, signals) {
       // starts falling the moment you have put a couple of streets between you.
       const span = Math.max(1, CLEAR_RANGE - NO_ESCAPE)
       const reach = Math.max(0, Math.min(1, (nearest - NO_ESCAPE) / span))
-      const decay = FULL_DECAY * reach * (seen ? 1 : UNSEEN_BONUS)
+      // BELOW THE FIRST STAR THE METER DOES NOT DRAIN, and without this the grace band does not
+      // exist. Heat decays at up to 16.5 a second when nobody is chasing you; a knockdown now adds
+      // 3.4. Ten of those reach the first star only if they land inside about two seconds, which
+      // is not "you can run over about ten people before your first star" — it is a meter that can
+      // never fill. So under one star the count accumulates and the drain is off: the band is a
+      // tally of what you have done, and it starts behaving like a meter the moment the police
+      // are actually interested.
+      const decay = state.stars === 0 ? 0 : FULL_DECAY * reach * (seen ? 1 : UNSEEN_BONUS)
       state.since = seen ? 0 : state.since + dt
 
 // Cornered. Three conditions together: a police car inside 22m, for eight seconds, while you
@@ -297,8 +370,7 @@ export function createPolice(world, scene, makeCar, signals) {
           state.cornered = 0
           state.heat = 0
           state.stars = 0
-          for (const cop of cops) scene.remove(cop.mesh)
-          cops.length = 0
+          for (const cop of cops) { cop.chasing = false; cop.target = null }
           say('BUSTED', 3.5)
           return
         }
@@ -321,13 +393,17 @@ export function createPolice(world, scene, makeCar, signals) {
       if (stars < state.stars) say(stars === 0 ? 'You lost them' : `Wanted level down — ${stars}`)
       state.stars = stars
 
-      // Retire the force once the meter is clear, so a quiet drive stays quiet.
-      if (stars === 0 && cops.length) {
-        for (const cop of cops) scene.remove(cop.mesh)
-        cops.length = 0
+      // The force is never retired. A cleared meter sends everybody back to parked rather than
+      // deleting them: they are the city's standing police and the map is meant to be the truth
+      // about where they are, which it cannot be if they vanish whenever the player is clean.
+      if (stars === 0) {
+        for (const cop of cops) { cop.chasing = false; cop.target = null }
       }
 
       for (const cop of cops) {
+        // Parked. No repath, no stepCar, no collision resolution — a standing car is a position
+        // and a dot until it is told to move, which is what keeps thirty of them free.
+        if (!cop.chasing) continue
         cop.repathIn -= dt
         if (cop.repathIn <= 0) {
           cop.repathIn = REPATH_EVERY

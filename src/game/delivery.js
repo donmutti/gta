@@ -29,12 +29,18 @@ const MAX_DROP = 700
 /**
  * Seconds per metre of straight-line distance, plus a fixed grace.
  *
- * Deliberately generous: at city pace a car covers about 9 m/s, so 0.22 is roughly two and a half
- * times the time a clean run needs. Failing should mean having stopped rather than having been
- * slow — the first thing this game ever asks of anybody should not be a thing they lose.
+ * FOUR TIMES WHAT IT WAS, on the owner's instruction after playing it: "the driving is still not
+ * ideal and it is hard to make it in time. 1:30 is not enough."
+ *
+ * The original 0.22 was reasoned from the straight-line distance at city pace and called
+ * deliberately generous in this file. It was neither. A straight line is not a route — the city
+ * is one-way streets, junctions and buildings — and the player who reported this drove into a
+ * building trying to reach a marker on his first attempt. **He did not finish his first delivery**,
+ * which is the reaching condition this objective is measured against, so the timer was not a rare
+ * fail condition. It was the binding constraint.
  */
-const SECONDS_PER_METRE = 0.22
-const GRACE = 20
+const SECONDS_PER_METRE = 0.88
+const GRACE = 80
 /** Seconds between one job ending and the next being offered. */
 const REST = 4
 
