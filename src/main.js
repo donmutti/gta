@@ -271,7 +271,9 @@ function frame(now) {
     // traffic, so nothing can be hit, yielded to, or charged as a crime.
     if (crowdsOn) crowd.update(dt, car, clock, chase.ready ? chase : null)
     clock += dt
-    if (crowdsOn) traffic.update(dt, car, clock, chase.ready ? chase : null)
+    // The crowd is passed in so traffic can knock people over. It updates BEFORE this call, so
+    // the bucket grid traffic reads holds this frame's positions.
+    if (crowdsOn) traffic.update(dt, car, clock, chase.ready ? chase : null, crowd)
     police.update(dt, car, crowdsOn ? crowd : EMPTY_CROWD, clock,
                   crowdsOn ? traffic : null, scene.userData.night ?? 0)
     audio.update(dt, car, police)

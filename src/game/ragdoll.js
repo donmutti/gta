@@ -147,7 +147,12 @@ export function strikeRagdoll({facing, scale, x, z, travelX, travelZ, awayX, awa
     bumps: 0,
     settleFor: 0,
     // How long they lie there before trying to get up, and how long the getting up takes.
-    restFor: 0.55 + 2.4 * e,
+    //
+    // Five to eight seconds, randomised, and biased upward by how hard they were hit. It used to
+    // be 0.55 to 2.95, which read as bouncing straight back up from being run over by a car. The
+    // pose they hold through it is not chosen here and must not be: it is wherever the tumble and
+    // the settle left them, which is the point of having physics do it.
+    restFor: 5 + 3 * (0.5 * rand() + 0.5 * Math.min(1, e)),
     riseFor: RISE_MIN + (RISE_MAX - RISE_MIN) * Math.min(1, e),
     riseT: 0,
     riseFrom: null,

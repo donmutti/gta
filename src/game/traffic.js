@@ -7,6 +7,7 @@
 // nobody watches a background car closely enough to notice it is on rails.
 
 import {makeCarFleet} from '../render/car.js'
+import {fleetBox} from './vehicles.js'
 import {STOP_LINE, GREEN_LIGHT} from './signals.js'
 import {groundAt} from '../world/ground.js'
 
@@ -28,6 +29,15 @@ const RESPAWN_MAX = 210
 const BEHIND_DOT = -0.25        // and "behind" means properly behind, not just off to the side
 /** Slow down when the car ahead on the same road is close. Stops them driving through each other. */
 const HEADWAY = 12
+/**
+ * Metres per second per second, when the thing ahead is a person.
+ *
+ * 7 is roughly what a road car on dry tarmac actually manages — about 0.7g — so from city cruise
+ * a driver who sees somebody at six metres stops in time and one who sees them at two does not.
+ * That is the correct outcome: this makes traffic TRY, which is what was asked for, rather than
+ * making the road safe.
+ */
+const EMERGENCY_BRAKE = 7
 /** Metres at which traffic hears a siren, and how long it keeps its head down afterwards. */
 const SIREN_RANGE = 34
 const SIREN_HOLD = 2.4
@@ -209,7 +219,7 @@ export function createTraffic(world, scene, signals) {
     },
     /** Number of traffic cars the player is currently shunting; the police read this. */
     lastImpacts: 0,
-    update(dt, player, clock = 0, eye = null) {
+    update(dt, player, clock = 0, eye = null, crowd = null) {
       this.lastImpacts = 0
       for (let i = 0; i < cars.length; i++) {
         const car = cars[i]
@@ -229,6 +239,20 @@ export function createTraffic(world, scene, signals) {
           const ahead = Math.cos(car.heading) * pdx + Math.sin(car.heading) * pdy
           if (ahead > 0) blocked = true
         }
+
+        // SOMEBODY IN THE ROAD. Traffic has no right-of-way model and is not getting one here —
+        // it does the thing a driver does when a person steps out, which is stand on the brakes.
+        //
+        // The sight distance is the real stopping distance and not a constant: reaction time at
+        // this speed plus v^2 / 2a for the deceleration below. A fixed lookahead either brakes
+        // far too early when crawling or far too late at cruise, and the second one is the
+        // failure that looked like traffic not caring.
+        const box = fleetBox(i)
+        const stopIn = Math.max(5, car.cruise * 0.7 + (car.cruise * car.cruise) / (2 * EMERGENCY_BRAKE))
+        const personAhead = crowd
+          ? crowd.pathAhead(car.x + car.ox, car.y + car.oy, car.heading, box.halfW + 0.5, stopIn)
+          : 0
+        const panic = personAhead > 0
 
         // Traffic lights. A car close enough that stopping would need harder braking than it has
         // is treated as committed and goes through on amber, exactly as a driver would.
@@ -261,8 +285,15 @@ export function createTraffic(world, scene, signals) {
         }
 
         if (car.yielding > 0) car.yielding -= dt
-        const want = blocked ? 0 : (car.yielding > 0 ? car.speed * 0.28 : car.speed)
-        car.cruise = (car.cruise ?? car.speed) + (want - (car.cruise ?? car.speed)) * Math.min(1, 2.5 * dt)
+        const want = (blocked || panic) ? 0 : (car.yielding > 0 ? car.speed * 0.28 : car.speed)
+        // A driver LIFTS OFF for a red light and STANDS ON THE PEDAL for a person, and the
+        // difference between those two is the whole point of this line. The old single rate eased
+        // toward the target over most of a second, which is fine for a signal you saw coming and
+        // is not braking at all when somebody steps off the kerb.
+        const now = car.cruise ?? car.speed
+        car.cruise = panic
+          ? Math.max(0, now - EMERGENCY_BRAKE * dt)
+          : now + (want - now) * Math.min(1, 2.5 * dt)
 
         car.t += (car.dir * car.cruise * dt) / car.edge.length
         if (car.t > 1 || car.t < 0) {
@@ -327,6 +358,22 @@ export function createTraffic(world, scene, signals) {
         const pdx2 = (car.x + car.ox) - player.x, pdy2 = (car.y + car.oy) - player.y
         if (pdx2 * pdx2 + pdy2 * pdy2 < HIT * HIT) {
           if (shunt(car, player)) this.lastImpacts++
+        }
+
+        // Knock over anybody under this vehicle. Until now the player was the only thing in the
+        // city that could touch a person, so buses drove through crowds and nobody flinched —
+        // which is the loudest possible reminder that the other traffic is scenery.
+        //
+        // The box is this slot's OWN measured footprint, from the same table the renderer draws
+        // from, so a bus catches people along ten metres of flank and a sedan does not. The cost
+        // is one bucket lookup per vehicle, not a sweep of the crowd: see crowd.strike.
+        if (crowd) {
+          // Traffic cars carry no velocity vector — they move along an edge — so it is built from
+          // the heading and the speed they are ACTUALLY doing, which after the braking above may
+          // be nothing like their cruise. Measured undefined on the first attempt at this.
+          crowd.strike(car.x + car.ox, car.y + car.oy, car.heading + car.spin,
+            Math.cos(car.heading) * car.cruise, Math.sin(car.heading) * car.cruise,
+            car.cruise, box)
         }
 
         // A car inside the camera is a wall of paint across the screen; drop it far below the

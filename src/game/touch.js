@@ -80,7 +80,9 @@ const css = `
 .tc-axis-dn { bottom:13px; transform:translateX(-50%); }
 
 /* --- the buttons layout's steering pad, which has no resting state by design: it is a surface, and
-   the ring marks where the thumb decided the centre was. */
+   the ring marks where the thumb decided the centre was. The button says "Brake" rather than
+   "Stop": stopping is the outcome, braking is the thing the finger is doing, and the stick's own
+   lower axis is labelled the same way so the two layouts agree. */
 .tc-ring { position:absolute; width:96px; height:96px; margin:-48px 0 0 -48px; border-radius:999px;
   border:2px solid rgba(255,255,255,0.35); pointer-events:none; opacity:0; }
 .tc-ring.on { opacity:1; }
@@ -207,7 +209,7 @@ export function createTouchControls(input, acts = {}, layout = touchLayout()) {
     ring = el('tc-ring')
     nub = el('tc-nub')
     go = el('tc-btn tc-go', 'Go')
-    stop = el('tc-btn tc-stop', 'Stop')
+    stop = el('tc-btn tc-stop', 'Brake')
     hold(go, 'go', (on) => { input.touch.throttle = on ? 1 : 0 })
     hold(stop, 'stop', (on) => { input.touch.throttle = on ? -1 : 0 })
 

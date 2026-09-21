@@ -5,11 +5,21 @@
 // chased through streets you recognise, which is enough.
 
 import {createCar, stepCar, CAR_RADIUS} from './car.js'
+import {VEHICLE_BOX, broadRadius, inBox, SHOULDER} from './vehicles.js'
 import {groundAt} from '../world/ground.js'
 import {orientToGround} from './carvisual.js'
 
 /** Metres. Generous, because a near miss at speed should still count as hitting someone. */
-const HIT_RADIUS = 2.4
+// The player drives the sedan hull, so their strike box is the sedan's — measured, not guessed.
+//
+// This used to be a single circle of radius 2.4m about the car's centre, and it was wrong in both
+// directions at once. Sideways it reached 1.3m past the doors, so people died with clear air
+// between them and the paintwork, which is what it looked like and what somebody playing it
+// reported. Lengthways it fell SHORT: the front corners sit 2.47m out, so clipping a pedestrian
+// with the corner of the bumper did nothing at all.
+const HERO_BOX = VEHICLE_BOX.car
+/** Broad phase only. Nothing outside this circle can be inside the box, so the cheap test stands. */
+const HIT_RADIUS = broadRadius(HERO_BOX, SHOULDER)
 /** A knocked pedestrian is out of action this long, then gets up. */
 const DOWN_TIME = 4.0
 /**
@@ -188,6 +198,9 @@ export function createPolice(world, scene, makeCar, signals) {
       const away = Math.atan2(ped.y - player.y, ped.x - player.x)
       ped.flipX = Math.cos(away) * 3.2
       ped.flipY = Math.sin(away) * 3.2
+      // Who hit them, so the crowd grades the tumble by THIS vehicle rather than by whatever is
+      // passed in as `car` when it steps. It matters now that buses can knock people over too.
+      ped.hitBy = {vx: player.vx, vy: player.vy, speed: player.speed}
       state.knocked++
       state.heat += 34
       say('You knocked someone over!')
@@ -215,10 +228,20 @@ export function createPolice(world, scene, makeCar, signals) {
 
       // Crime 1: running people over. Checked against the travelling crowd, which is already the
       // only set of pedestrians anywhere near the car.
+      //
+      // Two phases, and the cost is the point. The circle is the same single squared-distance
+      // compare per person the old test was, and it rejects all but the one or two people who are
+      // genuinely alongside. Only those get turned into the car's own frame — four multiplies and
+      // two compares — so the exact test runs a couple of times a frame rather than 340. The two
+      // trig calls are hoisted out of the loop, where the old code had none and was wrong.
+      const moving = Math.abs(player.speed) > 2
+      const fx = Math.cos(player.heading), fy = Math.sin(player.heading)
       for (const ped of crowd.peds) {
         if (ped.down > 0) continue
         const dx = ped.x - player.x, dy = ped.y - player.y
-        if (dx * dx + dy * dy < HIT_RADIUS * HIT_RADIUS && Math.abs(player.speed) > 2) {
+        if (dx * dx + dy * dy > HIT_RADIUS * HIT_RADIUS) continue
+        if (!moving) continue
+        if (inBox(ped.x, ped.y, player.x, player.y, fx, fy, HERO_BOX, SHOULDER)) {
           this.knock(ped, player)
         }
       }

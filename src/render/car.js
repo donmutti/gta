@@ -16,6 +16,7 @@
 //     userData.headlight (SpotLight), userData.tailGlow (PointLight), userData.lightbar when police.
 //   makeCarFleet(count) -> {group, setAt(i, x, z, rotY, colourIndex), count, palette}
 import * as THREE from 'three';
+import {fleetTypeFor} from '../game/vehicles.js';
 
 // ---------------------------------------------------------------------------------------------
 // Geometry helpers
@@ -432,10 +433,9 @@ const FLEET_PALETTE = [
   0x2f5c93, 0x203f6b, 0x2f5d43, 0xb7a37a, 0x7a2f3a, 0x365a6b, 0xc9852b,
 ];
 
-// The mix, by slot. A stable hash of the slot index picks the type, so slot i is ALWAYS the same
-// vehicle — deterministic, and cheap.
-const FLEET_MIX = ['car','car','car','wagon','car','van','car','car','wagon','van','car','bus'];
-function fleetTypeFor(i) { return FLEET_MIX[i % FLEET_MIX.length]; }
+// The mix, by slot, imported from the simulation side rather than declared here. The simulation
+// needs it too — a bus knocks people over along ten metres of flank and only this list says which
+// slots are buses — and two copies of a list like this drift the first time one is edited.
 
 export function makeCarFleet(count) {
   const paint = new THREE.MeshPhysicalMaterial({color: 0xffffff, metalness: 0.4, roughness: 0.4, clearcoat: 0.6, clearcoatRoughness: 0.3, side: THREE.DoubleSide});

@@ -173,7 +173,7 @@ The simulation is untouched. `src/game/car.js`, the police, the traffic and the 
 
 - User taps "Menu".
 - User taps "Controls: Stick".
-- Game destroys the stick, zeroes every axis, and draws the steering pad with "Go" and "Stop" instead.
+- Game destroys the stick, zeroes every axis, and draws the steering pad with "Go" and "Brake" instead.
 - Game remembers the choice for the next visit.
 - User drives on from where they were, without a reload.
 
@@ -198,6 +198,6 @@ None of these should be answered by guessing.
 
    - **The opening hint told a phone player to press W A S D.** Not clutter, false instructions, and the first thing a first-time visitor reads. Fixed: the hint names the controls the device actually has.
    - **The F3 debug panel was on by default and a phone has no F3**, so a developer overlay covering a third of the screen could never be dismissed. Fixed: off on a coarse pointer.
-   - **The update toast sat over "Stop" and "Drift".** Fixed: it clears the controls on a touch device.
+   - **The update toast sat over the throttle and handbrake buttons.** Fixed: it clears the controls on a touch device.
 
    What remains, and is knowingly left alone under section 3: the wanted stars run under "Menu" at the top right, and the street-name label sits just under the stick's "BRAKE" word at the bottom left. Neither blocks a control — both controls take the tap — and both are cosmetic on a screen this narrow. They are named here rather than fixed because rebuilding the HUD is a separate piece of work, and the screenshots are at `assets/gta-2026-09-21-mobile-controls.png` (buttons) and `assets/gta-2026-09-21-mobile-stick.png` (stick).

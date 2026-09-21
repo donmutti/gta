@@ -153,7 +153,7 @@ export function createHud() {
       ? 'W A S D  or  arrows to drive<br>SPACE to handbrake — this is how you drift<br>R to respawn · P to pause · C to change camera'
       : stick
         ? 'Left thumb on the stick — it comes to your thumb<br>Push up to go, down to brake · Drift to slide<br>Menu for map, camera, controls'
-        : 'Left thumb anywhere to steer<br>Go and Stop to drive · Drift to slide<br>Menu for map, camera, controls')
+        : 'Left thumb anywhere to steer<br>Go and Brake to drive · Drift to slide<br>Menu for map, camera, controls')
   requestAnimationFrame(() => { hint.style.opacity = '1' })
   let hintGone = false
   const dismissHint = () => {

@@ -23,6 +23,7 @@
 // of that, and the saving is what pays for the extra parts.
 
 import * as THREE from 'three'
+import {broadRadius, inBox, SHOULDER} from './vehicles.js'
 import {groundAt} from '../world/ground.js'
 import {createPose, strikeRagdoll, stepRagdoll, ragdollDuration} from './ragdoll.js'
 
@@ -70,6 +71,20 @@ const SIDEWALK = 1.4           // metres beyond the kerb
 /** Beyond this from the car a pedestrian is recycled; the ring is where they reappear. */
 const RECYCLE_AT = 170
 const RECYCLE_RING = 130
+// Where a recycled pedestrian is ALLOWED to reappear, which until now was nowhere in particular.
+// Traffic has had this rule for a while and the crowd never got it: `edgeNear(car, 130)` returns
+// any edge in the cells around the player, including the one they are driving down, and a random
+// point along it. Measured over forty seconds of driving, 91 recycles happened inside the view and
+// seven of them within 45m — the nearest materialised 6.1m in front of the bumper.
+//
+// So a person may now only appear where they cannot be watched appearing: behind the car, or far
+// enough ahead that the street bends or a building is in the way. RESPAWN_MAX stays under
+// RECYCLE_AT or somebody would be recycled on arrival and ping-pong forever.
+const RESPAWN_MIN = 45          // never closer than this, in any direction
+const RESPAWN_FAR = 110         // beyond this, ahead is fine
+const RESPAWN_MAX = 160
+const BEHIND_DOT = -0.25        // and "behind" means properly behind, not just off to the side
+const RESPAWN_TRIES = 6         // give up rather than force it: see the comment at the call site
 /** A car closer than this, coming fast, sends people running for the kerb. */
 const SCARE_RANGE = 15
 const SCARE_SPEED = 7          // m/s below which a car is just traffic, not a threat
@@ -412,6 +427,25 @@ export function createPedestrians(world, scene, signals) {
   }
 
   /** A walkable edge within `r` of (x, y), or null if that part of town has no streets. */
+  // Where everybody is, bucketed, rebuilt once at the end of each update. Traffic runs after the
+  // crowd in the frame loop, so what it reads is this frame's positions. It exists because the
+  // alternative — every vehicle testing every person — is 34 x 340 distance checks a frame to
+  // discover that almost nobody is under a car.
+  const HIT_CELL = 12
+  const hitGrid = new Map()
+  const cellKey = (cx, cy) => cx * 46337 + cy       // one integer, no string allocation per insert
+  function rebuildHitGrid() {
+    hitGrid.clear()
+    for (let i = 0; i < peds.length; i++) {
+      const p = peds[i]
+      if (p.down > 0) continue                      // already on the floor; nothing to knock down
+      const key = cellKey(Math.floor(p.x / HIT_CELL), Math.floor(p.y / HIT_CELL))
+      const bucket = hitGrid.get(key)
+      if (bucket) bucket.push(p)
+      else hitGrid.set(key, [p])
+    }
+  }
+
   function edgeNear(x, y, r) {
     const found = []
     for (let cx = Math.floor((x - r) / CELL); cx <= Math.floor((x + r) / CELL); cx++) {
@@ -642,11 +676,31 @@ export function createPedestrians(world, scene, signals) {
       const nodeId = ped.t > 1 ? ped.edge.b : ped.edge.a
       const options = world.nodes[nodeId]?.edges ?? []
       const next = options.length > 0 ? world.edges[options[(rand() * options.length) | 0]] : ped.edge
+      // WHERE THEY STAND NOW, before the handoff moves them. Both edges meet at the node, so the
+      // path position is continuous — but the pavement position is not. A walker is offset
+      // sideways by half the road's width plus a pavement, and the two roads at a corner have
+      // different widths and different directions, so "the right-hand pavement" of one is metres
+      // away from "the right-hand pavement" of the other. Measured: 85 of 90 pedestrian teleports
+      // over thirty seconds happened on an edge change, median 7.4m, in a single frame.
+      const wasX = ped.x, wasY = ped.y
       ped.edge = next
       // Enter the new edge from whichever end we arrived at.
       const enteredAtA = next.a === nodeId
       ped.t = enteredAtA ? 0.001 : 0.999
       ped.dir = enteredAtA ? 1 : -1
+      // Carry the discontinuity as a decaying offset instead of paying it in one frame, which is
+      // the same mechanism that walks somebody back to the pavement after a knockdown. They round
+      // the corner over about half a second rather than jumping across it.
+      place(ped)
+      // Clamped SHORT, and the reason is measured rather than tidy. The blend walks them from the
+      // old pavement to the new one in a straight line, and at a corner that line cuts across the
+      // carriageway — with traffic on it. A generous clamp left people standing in the road for
+      // most of a second, and with NPC vehicles now able to knock people down that showed up
+      // immediately as a rise in the number being hit. Three metres covers the ordinary corner;
+      // anything larger is a junction geometry the blend cannot help with anyway.
+      ped.fox += clamp(wasX - ped.x, -3, 3)
+      ped.foy += clamp(wasY - ped.y, -3, 3)
+      ped.corner = 1
     }
     advance(ped, dt, speed)
   }
@@ -828,6 +882,68 @@ export function createPedestrians(world, scene, signals) {
     peds,
     /** Debug lever: hide every instanced body part at once. */
     setVisible(v) { for (const m of crowdParts) m.visible = v },
+
+    /**
+     * How far ahead the nearest person in this vehicle's path is, or 0 for a clear road.
+     *
+     * A corridor rather than a cone: `halfW` is the vehicle's own half-width plus a margin, and
+     * `reach` is how far it needs to see to stop. Anybody inside that rectangle is somebody the
+     * driver would brake for. Same buckets as `strike`, so the cost is a handful of cells.
+     */
+    pathAhead(x, y, heading, halfW, reach) {
+      const fx = Math.cos(heading), fy = Math.sin(heading)
+      let best = 0
+      const c0 = Math.floor((x - reach) / HIT_CELL), c1 = Math.floor((x + reach) / HIT_CELL)
+      const r0 = Math.floor((y - reach) / HIT_CELL), r1 = Math.floor((y + reach) / HIT_CELL)
+      for (let cx = c0; cx <= c1; cx++) {
+        for (let cy = r0; cy <= r1; cy++) {
+          const bucket = hitGrid.get(cellKey(cx, cy))
+          if (!bucket) continue
+          for (const ped of bucket) {
+            const dx = ped.x - x, dy = ped.y - y
+            const along = dx * fx + dy * fy
+            if (along <= 0 || along > reach) continue
+            if (Math.abs(dy * fx - dx * fy) > halfW) continue
+            if (best === 0 || along < best) best = along
+          }
+        }
+      }
+      return best
+    },
+
+    /**
+     * Knock over anybody inside a moving vehicle's box. Traffic calls this once per vehicle.
+     *
+     * Until now the player was the only thing in the city that could touch a person: buses drove
+     * through crowds and nobody moved, which is the single loudest reminder that the other cars
+     * are scenery. The box is the vehicle's OWN measured footprint, so a bus knocks people over
+     * along ten metres of flank and a sedan does not.
+     */
+    strike(x, y, heading, vx, vy, speed, box) {
+      if (Math.abs(speed) < 2) return 0
+      const reach = broadRadius(box, SHOULDER)
+      const fx = Math.cos(heading), fy = Math.sin(heading)
+      let hits = 0
+      const c0 = Math.floor((x - reach) / HIT_CELL), c1 = Math.floor((x + reach) / HIT_CELL)
+      const r0 = Math.floor((y - reach) / HIT_CELL), r1 = Math.floor((y + reach) / HIT_CELL)
+      for (let cx = c0; cx <= c1; cx++) {
+        for (let cy = r0; cy <= r1; cy++) {
+          const bucket = hitGrid.get(cellKey(cx, cy))
+          if (!bucket) continue
+          for (const ped of bucket) {
+            if (ped.down > 0) continue
+            if (!inBox(ped.x, ped.y, x, y, fx, fy, box, SHOULDER)) continue
+            ped.down = 2.2
+            const away = Math.atan2(ped.y - y, ped.x - x)
+            ped.flipX = Math.cos(away) * 3.2
+            ped.flipY = Math.sin(away) * 3.2
+            ped.hitBy = {vx, vy, speed}
+            hits++
+          }
+        }
+      }
+      return hits
+    },
     /**
      * `car` supplies the point the heads look at, and the energy of anything it hits.
      *
@@ -847,7 +963,12 @@ export function createPedestrians(world, scene, signals) {
         // police file is not ours to change, so the strike is DETECTED here rather than announced —
         // and it means the energy comes off the car, which the knock call never carried.
         if (ped.down > 0 && !ped.rag) {
-          const speed = Math.hypot(car.vx, car.vy)
+          // WHO HIT THEM. This used to read the player's car unconditionally, which was true while
+          // the player was the only thing that could knock anybody over. Now a bus can, and taking
+          // the energy off a car forty metres away would grade the tumble by somebody else's
+          // speed — a stationary player would produce a limp collapse from a bus at 34 km/h.
+          const by = ped.hitBy || car
+          const speed = Math.hypot(by.vx, by.vy)
           const inv = 1 / (speed || 1)
           let ax = ped.flipX, ay = ped.flipY
           const alen = Math.hypot(ax, ay) || 1
@@ -856,15 +977,16 @@ export function createPedestrians(world, scene, signals) {
             facing: ped.heading + Math.PI / 2,
             scale: k,
             x: ped.x, z: -ped.y,
-            travelX: car.vx * inv, travelZ: -car.vy * inv,
+            travelX: by.vx * inv, travelZ: -by.vy * inv,
             awayX: ax, awayZ: -ay,
-            speed: Math.max(Math.abs(car.speed), speed),
+            speed: Math.max(Math.abs(by.speed ?? 0), speed),
             pose: ped.pose,
             rand,
           })
           // Hold them out of circulation for exactly as long as the sequence takes, so the police
           // do not re-run them over mid-tumble and nobody stands up early.
           ped.down = ragdollDuration(ped.rag)
+          ped.hitBy = null
         }
 
         if (ped.rag) {
@@ -934,10 +1056,13 @@ export function createPedestrians(world, scene, signals) {
           ped.fvy *= drag
           // Only walk back to the pavement once the fright has passed.
           if (ped.flee <= 0) {
-            const settle = Math.exp(-1.6 * dt)
+            // A corner is walked off faster than a fright is: rounding a corner takes a moment,
+            // recovering from a car nearly hitting you takes longer, and the same decay for both
+            // left people out in the road.
+            const settle = Math.exp((ped.corner ? -5.5 : -1.6) * dt)
             ped.fox *= settle
             ped.foy *= settle
-            if (Math.abs(ped.fox) < 0.02 && Math.abs(ped.foy) < 0.02) { ped.fox = 0; ped.foy = 0 }
+            if (Math.abs(ped.fox) < 0.02 && Math.abs(ped.foy) < 0.02) { ped.fox = 0; ped.foy = 0; ped.corner = 0 }
           }
           ped.x += ped.fox
           ped.y += ped.foy
@@ -948,14 +1073,31 @@ export function createPedestrians(world, scene, signals) {
         // anyone left far behind is recycled onto a street near the player, out of sight.
         const dx0 = ped.x - car.x, dy0 = ped.y - car.y
         if (dx0 * dx0 + dy0 * dy0 > RECYCLE_AT * RECYCLE_AT) {
-          const fresh = edgeNear(car.x, car.y, RECYCLE_RING)
-          if (fresh) {
+          // Try a few candidate spots and take the first one the player cannot see appear. The
+          // test has to be on the FINAL POSITION rather than on the edge: the edge is chosen
+          // first and the point along it at random, so an edge that is mostly behind you can
+          // still put somebody in your windscreen. Hence place() inside the loop.
+          const keepX = ped.x, keepY = ped.y, keepEdge = ped.edge, keepT = ped.t
+          let placed = false
+          for (let tries = 0; tries < RESPAWN_TRIES && !placed; tries++) {
+            const fresh = edgeNear(car.x, car.y, RECYCLE_RING)
+            if (!fresh) break
             ped.edge = fresh
             ped.t = rand()
             ped.dir = rand() < 0.5 ? 1 : -1
             ped.side = rand() < 0.5 ? 1 : -1
             place(ped)
+            const ax = ped.x - car.x, ay = ped.y - car.y
+            const d = Math.hypot(ax, ay)
+            if (d < RESPAWN_MIN || d > RESPAWN_MAX) continue
+            if (d > RESPAWN_FAR) { placed = true; break }
+            const fx = Math.cos(car.heading), fy = Math.sin(car.heading)
+            if ((ax * fx + ay * fy) / d < BEHIND_DOT) placed = true
           }
+          // Nowhere hidden was free this frame, so leave them where they are and try again next
+          // frame. Somebody standing unwatched 200m away costs nothing; somebody conjured into
+          // the view costs the illusion, which is the only thing this whole file is for.
+          if (!placed) { ped.edge = keepEdge; ped.t = keepT; ped.x = keepX; ped.y = keepY }
         }
 
         const pose = ped.pose
@@ -990,6 +1132,9 @@ export function createPedestrians(world, scene, signals) {
         }
       }
       for (const m of parts) m.instanceMatrix.needsUpdate = true
+      // Last, so the buckets hold this frame's positions. Traffic steps after the crowd does, so
+      // what it strikes is where people actually are and not where they were a frame ago.
+      rebuildHitGrid()
     },
   }
 }
