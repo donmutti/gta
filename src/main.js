@@ -133,6 +133,7 @@ const touchActs = {
   pause: () => { input.state.paused = !input.state.paused },
   layout: (next) => { layout = next; rememberLayout(next); rebuildTouch() },
   fullscreen: () => toggleFullscreen(),
+  fps: () => hud.toggleFps(),
 }
 const syncTouch = () => {
   const want = wantsTouch()

@@ -237,6 +237,13 @@ export function createTouchControls(input, acts = {}, layout = touchLayout()) {
   // worse than a missing one: the player taps it, nothing happens, and they conclude the game is
   // broken rather than that their browser does not do this.
   if (fullscreenAvailable()) items.Fullscreen = item('Fullscreen')
+  // The frame counter, reachable without a keyboard.
+  //
+  // The panel is off by default on a phone because F3 is the only way to dismiss it and a phone
+  // has no F3 — which was right, and it left the one number nobody can get any other way
+  // unreachable on the only device it is a question about. A menu item both shows it and takes
+  // it away again.
+  items.Fps = item('Frame rate')
   document.body.appendChild(root)
 
   const onMove = (e) => {
@@ -289,6 +296,7 @@ export function createTouchControls(input, acts = {}, layout = touchLayout()) {
   // where the throttle should live.
   tap(items.Layout, () => acts.layout?.(stickMode ? 'buttons' : 'stick'))
   if (items.Fullscreen) tap(items.Fullscreen, () => acts.fullscreen?.())
+  tap(items.Fps, () => { const on = acts.fps?.(); items.Fps.textContent = on ? 'Frame rate: on' : 'Frame rate' })
 
   return {
     layout: stickMode ? 'stick' : 'buttons',

@@ -137,11 +137,9 @@ export function createHud() {
   // reasoning about it.
   let showFps = !(window.matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0)
   fpsBox.style.display = showFps ? 'block' : 'none'
+  const setFps = (on) => { showFps = on; fpsBox.style.display = on ? 'block' : 'none' }
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'F3' || (e.code === 'KeyF' && e.shiftKey)) {
-      showFps = !showFps
-      fpsBox.style.display = showFps ? 'block' : 'none'
-    }
+    if (e.code === 'F3' || (e.code === 'KeyF' && e.shiftKey)) setFps(!showFps)
   })
 
   // --- opening hint. A player who opens this knows nothing about it; the controls are the first
@@ -178,10 +176,13 @@ export function createHud() {
   for (const ev of ['keydown', 'pointerdown']) window.addEventListener(ev, dismissHint, {once: true})
 
   let shownAlert = ''
+  /** Turn the panel on from somewhere other than a keyboard — the touch menu uses this. */
+  const toggleFps = () => { setFps(!showFps); return showFps }
   let shownStreet = null
 
   return {
     root,
+    toggleFps,
     update({gameHours, kmh, stars: level, message, objective: objLine = '', fps, drifting, paused, streetName, bustProgress = 0, draws = 0, tris = 0, peds = 0, cars = 0, x = 0, y = 0, heading = 0}) {
       // bustProgress is 0..1 of the way to being caught, so the bar shows what is LEFT.
       const remaining = Math.max(0, 1 - bustProgress)
