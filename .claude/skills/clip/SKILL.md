@@ -27,7 +27,7 @@ node tools/clip.mjs --scene drive  --at 139,203 --frames 60 --mp4 /tmp/street.mp
 
 ## Choosing between GIF and MP4
 
-MP4 for anything you are sending to Dmitrii: the same three seconds was 3.1 MB as a GIF and 234 KB as an MP4, and only the MP4 can carry sound. GIF when it must play inline somewhere that will not take a video, and note that many previewers show only the first frame of a GIF and look broken — say so when you send one.
+MP4 for anything you are sending to a person: the same three seconds was 3.1 MB as a GIF and 234 KB as an MP4, and only the MP4 can carry sound. GIF when it must play inline somewhere that will not take a video, and note that many previewers show only the first frame of a GIF and look broken — say so when you send one.
 
 ## Four things this gets right, each of which cost real time to learn
 

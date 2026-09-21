@@ -1674,7 +1674,7 @@ const TILE = 260;
 // Only the ones with room get it. Of the 411 degree-1 nodes, 43 have at least 30 m of empty radius
 // (measured to the nearest building corner and the nearest other carriageway); the other 368 end in
 // a wall, a junction or a river bank, and a horseshoe there would be trees growing out of masonry.
-// Thirty metres is Dmitrii's figure and it turns out to be a natural cut in the distribution: the
+// Thirty metres is the figure that was asked for, and it turns out to be a natural cut in the distribution: the
 // next bucket down, 20 to 30 m, holds only 15 more.
 //
 // Variegation comes free and is worth knowing about rather than re-implementing: buildTrees already

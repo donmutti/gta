@@ -8,6 +8,8 @@
 // buried the wanted level at the end of a string. Speed and threat are now the two loud things,
 // separated and placed where the eye already goes.
 
+import {touchLayout} from './touch.js'
+
 const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
 /** Every piece of HUD text sits over a moving 3D scene, so all of it carries a hard shadow. */
 const SHADOW = '0 1px 3px rgba(0,0,0,.95), 0 0 10px rgba(0,0,0,.65)'
@@ -143,10 +145,15 @@ export function createHud() {
   // W A S D is worse than saying nothing: it is the first thing they read and it is false, and it
   // was on screen for every mobile visitor until the touch controls were built.
   const coarse = window.matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0
+  // Which touch layout is live changes what the hint should say, and getting that wrong is the
+  // same fault as telling a phone to press W: instructions for controls that are not on screen.
+  const stick = coarse && touchLayout() !== 'buttons'
   hint.innerHTML = '<div style="font-size:13px;opacity:.7;letter-spacing:2px;margin-bottom:6px">LUXEMBOURG</div>'
-    + (coarse
-      ? 'Left thumb anywhere to steer<br>Go and Stop to drive · Drift to slide<br>Menu for map, camera, respawn'
-      : 'W A S D  or  arrows to drive<br>SPACE to handbrake — this is how you drift<br>R to respawn · P to pause · C to change camera')
+    + (!coarse
+      ? 'W A S D  or  arrows to drive<br>SPACE to handbrake — this is how you drift<br>R to respawn · P to pause · C to change camera'
+      : stick
+        ? 'Left thumb on the stick — it comes to your thumb<br>Push up to go, down to brake · Drift to slide<br>Menu for map, camera, controls'
+        : 'Left thumb anywhere to steer<br>Go and Stop to drive · Drift to slide<br>Menu for map, camera, controls')
   requestAnimationFrame(() => { hint.style.opacity = '1' })
   let hintGone = false
   const dismissHint = () => {

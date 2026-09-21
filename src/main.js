@@ -16,7 +16,7 @@ import {createBigMap} from './game/bigmap.js'
 import {createFeedback} from './game/feedback.js'
 import {createPicker} from './game/picker.js'
 import {createUpdateCheck} from './game/update.js'
-import {createTouchControls, wantsTouch} from './game/touch.js'
+import {createTouchControls, wantsTouch, touchLayout, rememberLayout} from './game/touch.js'
 import {createAudio} from './game/audio.js'
 import {createHud} from './game/hud.js'
 import {createPedestrians} from './game/pedestrians.js'
@@ -117,17 +117,31 @@ const input = createInput()
 // the view is clutter. Re-evaluated on change rather than read once, because a tablet in a keyboard
 // case switches while the page is open and a scheme decided at boot is wrong for the rest of the
 // session. Touch and keyboard are live together whenever both exist.
+//
+// TWO LAYOUTS, switchable from the menu while driving: a thumbstick (the default) and the steering
+// pad with Go/Stop buttons it replaced. Which of the two feels better is taste, and taste is
+// settled by a thumb on a phone rather than by an argument at half past one, so both ship and the
+// player picks. The choice is remembered.
 let touchUI = null
+let layout = touchLayout()
 const touchActs = {
   map: () => { input.state.mapToggle = true },
   camera: () => { input.state.camToggle = true },
   respawn: () => { input.state.respawn = true },
   pause: () => { input.state.paused = !input.state.paused },
+  layout: (next) => { layout = next; rememberLayout(next); rebuildTouch() },
 }
 const syncTouch = () => {
   const want = wantsTouch()
-  if (want && !touchUI) touchUI = createTouchControls(input, touchActs)
+  if (want && !touchUI) touchUI = createTouchControls(input, touchActs, layout)
   else if (!want && touchUI) { touchUI.destroy(); touchUI = null }
+}
+// Tear down and rebuild rather than mutate: destroy() zeroes the axes and drops every listener, so
+// a half-switched control cannot leave a throttle held down by a layout that no longer exists.
+function rebuildTouch() {
+  if (!touchUI) return
+  touchUI.destroy(); touchUI = null
+  syncTouch()
 }
 syncTouch()
 window.matchMedia('(pointer: coarse)').addEventListener?.('change', syncTouch)
@@ -316,5 +330,5 @@ boot('almost there…')
 requestAnimationFrame(frame)
 
 // Handy while tuning, and harmless in the build: the console can reach the car.
-window.game = {THREE, scene, camera, renderer, picker, updates, touch: () => touchUI, wantsTouch, car, world, bird,
+window.game = {THREE, scene, camera, renderer, picker, updates, touch: () => touchUI, wantsTouch, setTouchLayout: (v) => touchActs.layout(v), car, world, bird,
   camMode: () => CAM_MODES[camMode], setCamMode: (m) => { const i = CAM_MODES.indexOf(m); if (i < 0) return false; camMode = i; if (m !== 'bird') { restoreUp(camera); resetChase(chase) } else bird.ready = false; return true }, input, chase, crowd, police, traffic, audio, signals, minimap, carVisual, setHours: h => { gameHours = h }}

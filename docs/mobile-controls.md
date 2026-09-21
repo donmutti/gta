@@ -24,7 +24,7 @@ So the city builds and renders, and nothing can be driven. The player sees a red
 
 ## 2. What must be true when this is done
 
-- Somebody who opens the link on a phone can drive, steer, brake and stop, without instructions. The mechanism for that is the labels: the buttons say "Go", "Stop" and "Drift", and the steering pad needs no label because a thumb on the left half of a driving game is the one gesture everybody tries first. Nothing appears on first touch to explain anything, and if the labels turn out not to be enough that is a finding rather than a design to add now.
+- Somebody who opens the link on a phone can drive, steer, brake and stop, without instructions. The mechanism is that the controls are drawn and labelled: the stick is visible at rest with "GO" and "BRAKE" on its base, and "Drift" and "Menu" say what they are. The opening hint names the controls the device actually has, which is a thing it got wrong until a phone screenshot caught it telling touch users to press W A S D.
 - The controls do not appear on a desktop, and the keyboard does not stop working anywhere.
 - The frame rate on a mid-range phone is playable, or the game says what it has turned down and why.
 - Nothing about the simulation changes. Touch produces the same `input` state a keyboard produces, and the physics never learns which one it was.
@@ -40,25 +40,39 @@ So the city builds and renders, and nothing can be driven. The player sees a red
 
 The car needs four things: a direction, a speed, an emergency, and a way out of a mistake. Everything else in the game is a mode the player can reach through one button.
 
-### 4.1. Steering is a thumb zone, not a wheel
+### 4.1. One thumbstick carries both axes
 
-The left half of the screen is a steering pad. A touch anywhere in it sets an origin, and horizontal displacement from that origin steers: full lock at about a third of the screen width, proportional in between. Lifting returns the wheel to centre at the same rate the keyboard's release does.
+The left thumb drives the car. A stick with a base ring and a knob rests visibly in the lower left, and its vertical axis is throttle while its horizontal axis is steering: push up to accelerate, pull down to brake and then reverse, push left or right to steer. Full deflection on an axis is 62 points of travel from the centre.
 
-The origin is where the thumb lands rather than a fixed point, because a phone is held differently by every hand and a fixed wheel is in the wrong place for most of them. This also removes the need to look at the screen to find the control.
+The stick is drawn at rest rather than appearing on touch, and that is the whole reason it exists. The first design had an invisible pad occupying the left half, and an invisible control is not a control: somebody who opens the link sees a city and a blank half of the screen, with nothing saying that half is the steering. The base ring carries the words "GO" at the top and "BRAKE" at the bottom, so which way is fast needs no instructions.
 
-> A rendered steering wheel was considered and rejected. It looks like a car and plays worse than a pad: a wheel has a centre the thumb must return to precisely, and the thumb cannot see it. The pad's centre moves to the thumb, which is the whole advantage.
+It also floats. A touch anywhere in the left half re-homes the stick to that point and drives from there, so the ergonomic property of the first design survives: the control comes to the thumb rather than the thumb hunting for the control. Resting visibly and then moving to the thumb is both halves of the argument at once.
 
-Steering keeps the existing ramp. `STEER_ON` and `STEER_OFF` in `src/game/input.js` already shape how fast the wheel reaches lock and returns, and touch feeds the same command rather than writing `steer` directly, so the feel is identical on both inputs.
+> A rendered steering wheel was considered and rejected. It looks like a car and plays worse than a stick: a wheel has a centre the thumb must return to precisely, and the thumb cannot see it.
 
-### 4.2. Throttle and brake are two buttons on the right
+### 4.2. The axes are normalised independently, and the stick has corners
 
-Two large round controls, bottom right, thumb-reachable: "Go" above "Stop". Holding "Go" is holding `W`. Holding "Stop" is holding `S`, which brakes and then reverses, exactly as the key does.
+This is the one non-obvious decision in the scheme, and it is the reason a single stick is acceptable for a driving game at all.
 
-They are buttons rather than a second pad because throttle is binary in this game already. The keyboard has no analogue accelerator, so a slider would offer a precision the physics cannot use.
+A stick normalised by magnitude — the usual implementation, a knob clamped inside a circle — splits a diagonal between its axes. Holding up-and-left gives roughly 0.7 of throttle and 0.7 of lock, so the car slows down **because** you turned. That is precisely wrong for this game, where flat-out cornering is the thing worth protecting.
 
-### 4.3. The handbrake is the third button, and it is where the thumb already is
+So each axis is computed from its own displacement and clamped on its own: full up is full throttle no matter how far left the thumb is. The reachable area is therefore a square rather than a circle, and the knob can sit in a corner. Racing games on phones do exactly this, and what players notice is that holding up keeps the car fast, not the geometry of the region their thumb moves in.
 
-"Drift" sits beside "Go", slightly inboard, so the same thumb can hold throttle and stab the handbrake without moving across the screen. That combination is how the car drifts, and a control scheme that makes it awkward removes the best thing in the game.
+A deadzone of 14 percent of the throw is ignored on each axis so a resting thumb commands nothing, and the remaining throw is **rescaled** rather than truncated: without the rescale, the first responsive millimetre already commands 0.14 and the control starts with a step in it.
+
+### 4.3. The handbrake is a button, because a handbrake has no axis
+
+"Drift" sits bottom right, under the right thumb, so throttle and steering stay with the left thumb and the handbrake is stabbed with the other hand. That combination is how the car drifts, and a scheme that makes it awkward removes the best thing in the game.
+
+It is a button in both layouts. "Not separate buttons" cannot be absolute while a handbrake exists.
+
+### 4.3.1. Both layouts ship, and the player picks
+
+The first design put steering on a left-half pad and throttle on "Go" and "Stop" buttons bottom right. It was built and verified before the layout was overruled in favour of a stick, and it is kept rather than deleted, reachable from the menu as "Controls: Stick" / "Controls: Buttons". The stick is the default and the choice is remembered.
+
+Two reasons, and the second is the real one. A working implementation is evidence, and throwing away evidence before the replacement has been felt is expensive. And which of the two plays better is taste — it is settled by a thumb on a phone in ten seconds, and not by reasoning about it.
+
+Switching rebuilds the controls in place rather than reloading. The player is mid-drive, and a reload would dump them at the spawn point to answer a question about where the throttle should live. The teardown zeroes every axis, so a half-switched control cannot leave a throttle held down by a layout that no longer exists.
 
 ### 4.4. Everything else is one menu
 
@@ -109,12 +123,13 @@ The honest order of work is to ship the controls, measure on a real phone, then 
 | file | change |
 |---|---|
 | `index.html` | viewport meta gains `user-scalable=no`; a root element for the controls |
-| `src/game/touch.js` | new. Owns the pad, the buttons, the menu, a **map from `pointerId` to the control that touch claimed**, and writes the same `input` state the keyboard writes |
+| `src/game/touch.js` | new. Owns both layouts, the menu, a **map from `pointerId` to the control that touch claimed**, and writes the same `input` state the keyboard writes |
 | `src/game/input.js` | unchanged in behaviour. Exposes its state so touch drives it through the same ramp |
-| `src/main.js` | creates the touch controls when the device warrants them, and disposes them if it stops warranting them |
+| `src/main.js` | creates the touch controls when the device warrants them, disposes them if it stops warranting them, and rebuilds them when the player switches layout |
+| `src/game/hud.js` | the opening hint names the live controls; the F3 panel is off on a coarse pointer, because a phone cannot press F3 to dismiss it |
 | `src/render/scene.js` | a mobile pixel-ratio cap, behind the same device test |
 
-**Every handler keys on `pointerId`, and this is the bug the design is most likely to ship with.** Holding "Go" while steering is two simultaneous touches, and section 4.3 asks for three: throttle held, handbrake stabbed, wheel turned. A handler that tracks "the touch" rather than "the touch with this id" lets the second finger steal the first, and the symptom is not an obvious crash. It is steering that sticks when you press a button, or throttle that drops when you turn, which reads as a physics bug and gets debugged in the wrong file. Each control captures the pointer that started on it, follows only that id through move and up, and releases only its own.
+**Every handler keys on `pointerId`, and this is the bug the design is most likely to ship with.** On the stick, throttle and steering are one finger and "Drift" is a second; on the buttons layout it is three at once. A handler that tracks "the touch" rather than "the touch with this id" lets the second finger steal the first, and the symptom is not an obvious crash. It is steering that sticks when you press a button, or throttle that drops when you turn, which reads as a physics bug and gets debugged in the wrong file. Each control captures the pointer that started on it, follows only that id through move and up, and releases only its own.
 
 The simulation is untouched. `src/game/car.js`, the police, the traffic and the crowd never learn that a phone exists, which is the property that keeps this from becoming a second game to maintain.
 
@@ -126,25 +141,23 @@ The simulation is untouched. `src/game/car.js`, the police, the traffic and the 
 
 - User opens the deployed link in a mobile browser.
 - Game detects a coarse pointer and available touch points.
-- Game draws the steering pad, the "Go", "Stop" and "Drift" buttons, and the "Menu" button.
+- Game draws the thumbstick at rest, the "Drift" button, and the "Menu" button.
 - Game suppresses browser zoom and double-tap gestures over the play surface.
 - User sees the city and the controls together, with no instructions to read.
 
 **8.1.2. Drive the Car**
 
-- User places a thumb anywhere in the left half of the screen.
-- Game records that point as the steering origin.
-- User moves the thumb horizontally.
-- Game converts the displacement into a steering command and feeds it through the existing ramp.
-- User holds "Go" with the other thumb.
-- Game applies throttle exactly as it does for the `W` key.
-- User lifts the steering thumb.
-- Game returns the wheel to centre at the keyboard's release rate.
+- User places a left thumb anywhere in the left half of the screen.
+- Game re-homes the stick to that point and grabs the knob.
+- User pushes the thumb up and to the left.
+- Game reads each axis separately and commands full throttle and full left lock together.
+- User lifts the thumb.
+- Game returns the knob to the stick centre and zeroes both axes.
 
 **8.1.3. Drift Round a Corner**
 
-- User holds "Go" and steers into the corner.
-- User taps and holds "Drift" with the same thumb that holds "Go".
+- User pushes the stick up and into the corner with the left thumb.
+- User taps and holds "Drift" with the right thumb, without moving the left one.
 - Game drops lateral grip, exactly as the handbrake key does.
 - User releases "Drift".
 - Game restores grip and the car catches.
@@ -152,11 +165,19 @@ The simulation is untouched. `src/game/car.js`, the police, the traffic and the 
 **8.1.4. Reach a Mode**
 
 - User taps "Menu".
-- Game opens a column holding "Map", "Camera", "Respawn" and "Pause".
+- Game opens a column holding "Map", "Camera", "Respawn", "Pause" and "Controls".
 - User taps one.
 - Game performs it and closes the menu.
 
-**8.1.5. Dock a Tablet into a Keyboard**
+**8.1.5. Try the Other Control Layout**
+
+- User taps "Menu".
+- User taps "Controls: Stick".
+- Game destroys the stick, zeroes every axis, and draws the steering pad with "Go" and "Stop" instead.
+- Game remembers the choice for the next visit.
+- User drives on from where they were, without a reload.
+
+**8.1.6. Dock a Tablet into a Keyboard**
 
 - User docks a tablet that was being driven by touch.
 - Device stops matching `(pointer: coarse)`.
@@ -169,13 +190,14 @@ The simulation is untouched. `src/game/car.js`, the police, the traffic and the 
 
 None of these should be answered by guessing.
 
-1. **What frame rate does a mid-range phone actually get?** Everything in section 6 is a plan rather than a decision until somebody runs the deployed build on real hardware. Dmitrii's phone is the nearest instrument.
+1. **What frame rate does a mid-range phone actually get?** Everything in section 6 is a plan rather than a decision until somebody runs the deployed build on real hardware. A real phone is the only instrument that answers it.
 2. **Does the pixel-ratio cap need to be adaptive?** A fixed mobile cap of 1.0 is the simple answer. Measuring frame time and adjusting is the better one, and it is worth nothing if the fixed cap already suffices.
-3. **Portrait, landscape, or both?** The screenshot that prompted this was portrait. Landscape gives a driving game more of what it needs and asks the player to turn the phone, which some will not do. Both is more work than either, and may be the right answer anyway.
-4. **Does the on-screen HUD survive a 390-pixel width? Answered, partly, and it found two faults worse than overlap.** One screenshot at 390 points with the controls drawn showed:
+3. **Which layout wins?** Both ship and the menu switches between them, which is a way of asking the question rather than an answer to it. When somebody has driven both on a phone, the loser comes out and this line closes.
+4. **Portrait, landscape, or both?** The screenshot that prompted this was portrait. Landscape gives a driving game more of what it needs and asks the player to turn the phone, which some will not do. Both is more work than either, and may be the right answer anyway.
+5. **Does the on-screen HUD survive a 390-pixel width? Answered, partly, and it found two faults worse than overlap.** One screenshot at 390 points with the controls drawn showed:
 
    - **The opening hint told a phone player to press W A S D.** Not clutter, false instructions, and the first thing a first-time visitor reads. Fixed: the hint names the controls the device actually has.
    - **The F3 debug panel was on by default and a phone has no F3**, so a developer overlay covering a third of the screen could never be dismissed. Fixed: off on a coarse pointer.
    - **The update toast sat over "Stop" and "Drift".** Fixed: it clears the controls on a touch device.
 
-   What remains, and is knowingly left alone under section 3: the wanted stars run under "Menu" at the top right, and the street-name label runs under "Stop" at the bottom left. Neither blocks a control — both controls take the tap — and both are cosmetic on a screen this narrow. They are named here rather than fixed because rebuilding the HUD is a separate piece of work, and the screenshot is at `assets/gta-2026-09-21-mobile-controls.png`.
+   What remains, and is knowingly left alone under section 3: the wanted stars run under "Menu" at the top right, and the street-name label sits just under the stick's "BRAKE" word at the bottom left. Neither blocks a control — both controls take the tap — and both are cosmetic on a screen this narrow. They are named here rather than fixed because rebuilding the HUD is a separate piece of work, and the screenshots are at `assets/gta-2026-09-21-mobile-controls.png` (buttons) and `assets/gta-2026-09-21-mobile-stick.png` (stick).

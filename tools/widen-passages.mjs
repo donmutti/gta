@@ -51,7 +51,7 @@
 //     against the corridor instead of the carriageway. This is the preferred lever because the
 //     deficits along one side of one street are near-uniform (Avenue de la Liberte measures 5.8,
 //     5.9, 6.2, 6.2 down its pinched side), so the whole frontage translates together and the street
-//     still reads as a straight terrace. Dmitrii's call, quoted: "You may deviate from OSM."
+//     still reads as a straight terrace. The call, quoted: "You may deviate from OSM."
 //
 //  2. RE-DERIVE THE WIDTH. unblock-roads writes per-road `width` overrides, and 140 roads carry one.
 //     They are the other half of the same problem and they are in tension with this tool: it

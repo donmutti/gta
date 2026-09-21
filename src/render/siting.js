@@ -126,7 +126,7 @@ export function createSiting(world, {keepClear = [], furniture = []} = {}) {
   // this file threw away 9,327 trees "in the river", nearly all of them standing on dry hillside.
   //
   // So a genuine closed body excludes its INTERIOR and its bank — that is the pond, and the bank is
-  // the thing Dmitrii actually asked for. A river line excludes only a narrow corridor along the
+  // the thing actually asked for. A river line excludes only a narrow corridor along the
   // line itself, which is all an untraced width entitles it to.
   const bodies = [], lines = [];
   for (const pts of (world.water ?? [])) {
