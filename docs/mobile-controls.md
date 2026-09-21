@@ -172,4 +172,10 @@ None of these should be answered by guessing.
 1. **What frame rate does a mid-range phone actually get?** Everything in section 6 is a plan rather than a decision until somebody runs the deployed build on real hardware. Dmitrii's phone is the nearest instrument.
 2. **Does the pixel-ratio cap need to be adaptive?** A fixed mobile cap of 1.0 is the simple answer. Measuring frame time and adjusting is the better one, and it is worth nothing if the fixed cap already suffices.
 3. **Portrait, landscape, or both?** The screenshot that prompted this was portrait. Landscape gives a driving game more of what it needs and asks the player to turn the phone, which some will not do. Both is more work than either, and may be the right answer anyway.
-4. **Does the on-screen HUD survive a 390-pixel width, and do the controls overlap it?** The speedometer, the wanted stars and the minimap were laid out for a desktop window and have never been looked at on a phone. Section 3 refuses to move them in this piece of work, so any overlap is a defect this design knowingly leaves in place. Answering it needs one screenshot of the built page at 390 points with the controls drawn.
+4. **Does the on-screen HUD survive a 390-pixel width? Answered, partly, and it found two faults worse than overlap.** One screenshot at 390 points with the controls drawn showed:
+
+   - **The opening hint told a phone player to press W A S D.** Not clutter, false instructions, and the first thing a first-time visitor reads. Fixed: the hint names the controls the device actually has.
+   - **The F3 debug panel was on by default and a phone has no F3**, so a developer overlay covering a third of the screen could never be dismissed. Fixed: off on a coarse pointer.
+   - **The update toast sat over "Stop" and "Drift".** Fixed: it clears the controls on a touch device.
+
+   What remains, and is knowingly left alone under section 3: the wanted stars run under "Menu" at the top right, and the street-name label runs under "Stop" at the bottom left. Neither blocks a control — both controls take the tap — and both are cosmetic on a screen this narrow. They are named here rather than fixed because rebuilding the HUD is a separate piece of work, and the screenshot is at `assets/gta-2026-09-21-mobile-controls.png`.

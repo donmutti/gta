@@ -116,7 +116,12 @@ export function createHud() {
     opacity: '.62', textShadow: SHADOW, display: 'block', fontVariantNumeric: 'tabular-nums',
     lineHeight: '1.5', whiteSpace: 'pre',
   }, root)
-  let showFps = true
+  // Off by default on a touch device, and the reason is not clutter: the only way to dismiss this
+  // panel is F3, and a phone has no F3. A developer panel that a player cannot close is worse on
+  // the device that cannot close it. Found by screenshotting the game at 390 points rather than by
+  // reasoning about it.
+  let showFps = !(window.matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0)
+  fpsBox.style.display = showFps ? 'block' : 'none'
   window.addEventListener('keydown', (e) => {
     if (e.code === 'F3' || (e.code === 'KeyF' && e.shiftKey)) {
       showFps = !showFps
@@ -134,8 +139,14 @@ export function createHud() {
     textShadow: SHADOW, opacity: '0', transition: 'opacity .6s', letterSpacing: '.3px',
     background: 'rgba(0,0,0,.42)', padding: '14px 22px', borderRadius: '10px',
   }, root)
+  // The hint names the controls the device actually has. Telling somebody on a phone to press
+  // W A S D is worse than saying nothing: it is the first thing they read and it is false, and it
+  // was on screen for every mobile visitor until the touch controls were built.
+  const coarse = window.matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0
   hint.innerHTML = '<div style="font-size:13px;opacity:.7;letter-spacing:2px;margin-bottom:6px">LUXEMBOURG</div>'
-    + 'W A S D  or  arrows to drive<br>SPACE to handbrake — this is how you drift<br>R to respawn · P to pause · C to change camera'
+    + (coarse
+      ? 'Left thumb anywhere to steer<br>Go and Stop to drive · Drift to slide<br>Menu for map, camera, respawn'
+      : 'W A S D  or  arrows to drive<br>SPACE to handbrake — this is how you drift<br>R to respawn · P to pause · C to change camera')
   requestAnimationFrame(() => { hint.style.opacity = '1' })
   let hintGone = false
   const dismissHint = () => {

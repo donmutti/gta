@@ -77,7 +77,11 @@ export function createUpdateCheck({onStatus} = {}) {
     if (el) el.remove()
     el = document.createElement('div')
     el.style.cssText = [
-      'position:fixed', 'left:16px', 'bottom:16px', 'z-index:60',
+      // Above the touch controls rather than over them: Stop and Drift live in the bottom right
+      // corner on a phone, and a toast there covers the brake.
+      'position:fixed', 'left:16px',
+      (window.matchMedia('(pointer: coarse)').matches ? 'bottom:200px' : 'bottom:16px'),
+      'right:16px', 'z-index:60',
       'display:flex', 'align-items:center', 'gap:12px',
       'padding:10px 12px', 'border-radius:8px',
       'background:rgba(18,20,24,0.92)', 'color:#e8e8ea',

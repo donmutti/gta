@@ -10,6 +10,12 @@ const STEER_OFF = 11.0  // how fast it returns to centre when let go
 
 export function createInput() {
   const down = new Set()
+  // What the touch controls are asking for, if there are any. They do not write `state` directly:
+  // sample() recomputes the axes from scratch every frame, so anything written from outside is
+  // overwritten before the physics sees it. Feeding the same computation instead means touch gets
+  // the steering ramp for free and the two inputs sum rather than fight, which is what a laptop
+  // with a touchscreen needs.
+  const touch = {throttle: 0, steer: 0, handbrake: false}
   const state = {throttle: 0, steer: 0, handbrake: false, respawn: false, paused: false,
                  mapToggle: false, mapClose: false,
                  fbToggle: false, fbClose: false, fbPick: null,
@@ -42,18 +48,21 @@ export function createInput() {
 
   return {
     state,
+    /** Written by the touch controls; read by sample(). Empty on a device with no touch. */
+    touch,
     /** Advance the ramped axes. Call once per frame before the physics. */
     sample(dt) {
+      const clamp = (v) => v < -1 ? -1 : v > 1 ? 1 : v
       const fwd = held('KeyW', 'ArrowUp') ? 1 : 0
       const back = held('KeyS', 'ArrowDown') ? 1 : 0
-      state.throttle = fwd - back
+      state.throttle = clamp(fwd - back + touch.throttle)
 
-      const want = (held('KeyA', 'ArrowLeft') ? 1 : 0) - (held('KeyD', 'ArrowRight') ? 1 : 0)
+      const want = clamp((held('KeyA', 'ArrowLeft') ? 1 : 0) - (held('KeyD', 'ArrowRight') ? 1 : 0) + touch.steer)
       const rate = want === 0 ? STEER_OFF : STEER_ON
       state.steer += (want - state.steer) * Math.min(1, rate * dt)
       if (want === 0 && Math.abs(state.steer) < 0.01) state.steer = 0
 
-      state.handbrake = held('Space')
+      state.handbrake = held('Space') || touch.handbrake
       return state
     },
     /** Read-and-clear, for the one-shot keys. */

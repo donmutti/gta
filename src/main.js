@@ -16,6 +16,7 @@ import {createBigMap} from './game/bigmap.js'
 import {createFeedback} from './game/feedback.js'
 import {createPicker} from './game/picker.js'
 import {createUpdateCheck} from './game/update.js'
+import {createTouchControls, wantsTouch} from './game/touch.js'
 import {createAudio} from './game/audio.js'
 import {createHud} from './game/hud.js'
 import {createPedestrians} from './game/pedestrians.js'
@@ -105,10 +106,31 @@ const feedback = createFeedback()
 const picker = createPicker(scene, camera, renderer.domElement)
 const updates = createUpdateCheck()
 let wasFrozen = false
+
 const audio = createAudio()
 // Browsers refuse to start audio without a gesture; the first key the player touches is ours.
 for (const ev of ['keydown', 'pointerdown']) window.addEventListener(ev, () => audio.resume(), {once: false})
 const input = createInput()
+
+// Touch controls, on a device whose PRIMARY pointer is coarse. A laptop with a touchscreen and a
+// mouse reports fine and gets none, which is correct: its keyboard works and a steering pad over
+// the view is clutter. Re-evaluated on change rather than read once, because a tablet in a keyboard
+// case switches while the page is open and a scheme decided at boot is wrong for the rest of the
+// session. Touch and keyboard are live together whenever both exist.
+let touchUI = null
+const touchActs = {
+  map: () => { input.state.mapToggle = true },
+  camera: () => { input.state.camToggle = true },
+  respawn: () => { input.state.respawn = true },
+  pause: () => { input.state.paused = !input.state.paused },
+}
+const syncTouch = () => {
+  const want = wantsTouch()
+  if (want && !touchUI) touchUI = createTouchControls(input, touchActs)
+  else if (!want && touchUI) { touchUI.destroy(); touchUI = null }
+}
+syncTouch()
+window.matchMedia('(pointer: coarse)').addEventListener?.('change', syncTouch)
 const chase = createChaseCamera()
 // Camera modes, cycled with C. Chase is the driving view; bird is the map view you edit in.
 const bird = createBirdCamera()
@@ -294,5 +316,5 @@ boot('almost there…')
 requestAnimationFrame(frame)
 
 // Handy while tuning, and harmless in the build: the console can reach the car.
-window.game = {THREE, scene, camera, renderer, picker, updates, car, world, bird,
+window.game = {THREE, scene, camera, renderer, picker, updates, touch: () => touchUI, wantsTouch, car, world, bird,
   camMode: () => CAM_MODES[camMode], setCamMode: (m) => { const i = CAM_MODES.indexOf(m); if (i < 0) return false; camMode = i; if (m !== 'bird') { restoreUp(camera); resetChase(chase) } else bird.ready = false; return true }, input, chase, crowd, police, traffic, audio, signals, minimap, carVisual, setHours: h => { gameHours = h }}

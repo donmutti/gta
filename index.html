@@ -3,7 +3,10 @@
 <head>
   <meta charset="utf-8">
   <title>LUX</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <!-- user-scalable=no has been ignored by iOS Safari since iOS 10, deliberately, for
+       accessibility. It is here for the browsers that still honour it and nothing depends on
+       it: touch-action on the play surface is what actually stops pinch and double-tap. -->
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e1a; }
     #app { position: fixed; inset: 0; }
