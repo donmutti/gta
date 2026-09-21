@@ -105,7 +105,22 @@ try {
     process.exit(1);
   }
   if (process.argv.includes('--logs')) console.error(logs.join('\n'));
-  console.log(JSON.stringify(out.result?.value, null, 2));
+
+  // Say what was looked at, even when the answer is nothing.
+  //
+  // An expression returning undefined used to print the bare word `undefined`, which is the same
+  // output as a probe that evaluated the wrong thing, matched nothing, or never reached the page —
+  // and an empty or ambiguous result is indistinguishable from not having run. The result goes to
+  // stdout so it can be piped; the account of what produced it goes to stderr so it never corrupts
+  // that. Both halves of the rule the team adopted on 2026-09-21.
+  const value = out.result?.value;
+  const kind = value === undefined ? 'undefined'
+    : Array.isArray(value) ? `array of ${value.length}`
+    : value === null ? 'null' : typeof value;
+  const oneLine = EXPR.replace(/\s+/g, ' ').trim();
+  console.error(`-- probe evaluated ${oneLine.length > 60 ? oneLine.slice(0, 57) + '...' : oneLine}`
+                + ` against ${URL} -> ${kind}`);
+  console.log(JSON.stringify(value, null, 2));
   chrome.kill();
   process.exit(0);
 } catch (e) {
