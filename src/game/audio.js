@@ -143,10 +143,10 @@ export function createAudio() {
       nodes.sirenGain.gain.setTargetAtTime(0, now, 0.08)
     },
 
-    update(dt, car, police, horn = false) {
+    update(dt, car, police, horn = false, trafficHorn = 0) {
       if (!started || ctx.state !== 'running') return
       const now = ctx.currentTime
-      nodes.hornGain.gain.setTargetAtTime(horn ? 0.22 : 0, now, horn ? 0.015 : 0.04)
+      nodes.hornGain.gain.setTargetAtTime(horn ? 0.22 : trafficHorn * 0.16, now, horn || trafficHorn ? 0.015 : 0.04)
       const speed = Math.abs(car.speed)
 
       // One thud per fresh contact, and at most a few a second while scraping along something.

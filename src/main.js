@@ -316,7 +316,7 @@ function frame(now) {
       traffic.collideWith(car)
       crowd.resolveContacts(vehicleBodies.update(crowdsOn))
     }
-    audio.update(dt, car, police, held.horn)
+    audio.update(dt, car, police, held.horn, crowdsOn ? traffic.hornLevel : 0)
   }
   // Frozen: the simulation stops being ticked, so the audio must be told, or the engine hangs on
   // whatever note it was holding when the world stopped. Same for the map — a siren wailing over a

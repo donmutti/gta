@@ -1,3 +1,4 @@
+import {playerBlocksLane, updatePatience} from './traffic-horn.js'
 import {groundHeight, surfaceHeight} from '../world/terrain.js'
 // Ambient traffic. The thing that turns a city you drive through into a city that is already busy
 // without you.
@@ -307,6 +308,7 @@ export function createTraffic(world, scene, signals) {
     lastImpacts: 0,
     update(dt, player, clock = 0, eye = null, crowd = null) {
       this.lastImpacts = 0
+      this.hornLevel = 0
       for (let i = 0; i < cars.length; i++) {
         const car = cars[i]
         planJunction(car)
@@ -321,11 +323,8 @@ export function createTraffic(world, scene, signals) {
           if (gap > 0 && gap < HEADWAY) { blocked = true; break }
         }
         // And for the player, so they brake rather than drive through you.
-        const pdx = player.x - car.x, pdy = player.y - car.y
-        if (pdx * pdx + pdy * pdy < 64) {
-          const ahead = Math.cos(car.heading) * pdx + Math.sin(car.heading) * pdy
-          if (ahead > 0) blocked = true
-        }
+        const playerBlocking = playerBlocksLane(car, player)
+        if (playerBlocking) blocked = true
 
         // SOMEBODY IN THE ROAD. Traffic has no right-of-way model and is not getting one here —
         // it does the thing a driver does when a person steps out, which is stand on the brakes.
@@ -350,6 +349,12 @@ export function createTraffic(world, scene, signals) {
           const toStopLine = sig.dist - STOP_LINE
           const committed = toStopLine < 3.5
           if (!committed && toStopLine < Math.max(6, (car.cruise ?? car.speed) * 2.2)) blocked = true
+        }
+
+        const redLight = sig && sig.light !== GREEN_LIGHT && sig.dist < 25
+        if (updatePatience(car, playerBlocking && !redLight && !panic && (car.cruise ?? 0) < 2, dt, i)) {
+          const distance = Math.hypot(player.x-car.x-car.ox,player.y-car.y-car.oy)
+          this.hornLevel = Math.max(this.hornLevel, Math.max(0,1-distance/45))
         }
 
         // Unsignalled junctions: yield to whoever is closer to the box. Not a full right-of-way
