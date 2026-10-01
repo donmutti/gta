@@ -178,7 +178,12 @@ Top speed is about 99 km/h. It corners on the limit at 0.61 rad/s and comes out 
 npm run smoke            # load the page headless; fails on an exception or a black frame
 npm run smoke -- --prod  # build, preview, and check the built bundle
 npm run build            # production build into dist/
+npm run performance      # FPS comparison and scenarios; dev server must be running
 ```
+
+The FPS panel counts rendered animation frames divided by their actual elapsed wall time, updated about once a second. It does not use the simulation timestep, which is capped at 50 ms to keep physics stable after a stall. `npm run performance` measures six-second windows after warming each scenario, reporting average FPS and the 95th-percentile frame interval for night, day, rain, bird camera, and driving. It uses a 1920×1080 browser viewport at device pixel ratio 2; the renderer's existing 1.5 cap produces a 2880×1620 drawing buffer. Run it without other benchmark browsers competing for the GPU.
+
+Police lighting has a budget: the four patrols nearest the player cast real headlight and tail-light illumination. All thirty patrols remain in the world, and their lightbars still respond to the wanted level. Three.js evaluates each visible light across shaded surfaces even when that light is far away, so lighting every parked patrol made the entire city expensive. The benchmark temporarily restores all thirty pairs of lights between two optimized night samples to make the before/after comparison repeatable in the same browser. Its `pass` field checks the 30 FPS floor for each optimized scenario; the original-lighting sample is only a reference.
 
 `tools/birdseye.mjs` photographs the running city from above, because a complaint about a world is almost always a complaint about its layout and you cannot see a layout from inside a car. `tools/portrait.mjs` frames a single vehicle. `tools/probe.mjs` asks the running game a question and prints the answer. `tools/clip.mjs` records a GIF or an MP4 with the game's own sound.
 

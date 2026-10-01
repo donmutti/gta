@@ -328,7 +328,7 @@ function frame(now) {
   if (cost > worstFrame) worstFrame = cost
   frames++
   if (now - fpsAt > 1000) {
-    fps = frames; frames = 0; fpsAt = now; worstFrame = 0
+    fps = Math.round(frames * 1000 / (now - fpsAt)); frames = 0; fpsAt = now; worstFrame = 0
   }
 
   hud.update({

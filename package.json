@@ -7,7 +7,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "fetch-city": "node tools/fetch-city.mjs",
-    "smoke": "node tools/smoke.mjs"
+    "smoke": "node tools/smoke.mjs",
+    "performance": "node tools/probe.mjs --file tools/performance.js --width 1920 --height 1080 --dpr 2 --logs"
   },
   "keywords": [],
   "author": "",

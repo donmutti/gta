@@ -76,6 +76,8 @@ const SPEEDING = 24         // m/s past which the police take an interest at all
 
 export function createPolice(world, scene, makeCar, signals) {
   const cops = []
+  const lightOrder = []
+  const MAX_LIT_COPS = 4
   const state = {
     stars: 0,
     heat: 0,            // rises with crime, decays out of sight; stars are thresholds on it
@@ -142,6 +144,7 @@ export function createPolice(world, scene, makeCar, signals) {
       headlight: mesh.userData.headlight ?? null,
       tail: mesh.userData.tailGlow ?? null,
     })
+    lightOrder.push(cops[cops.length - 1])
     return cops[cops.length - 1]
   }
 
@@ -273,6 +276,19 @@ export function createPolice(world, scene, makeCar, signals) {
     },
 
     update(dt, player, crowd, clock = 0, traffic = null, night = 0) {
+      // Three's forward renderer evaluates every visible light for every shaded surface,
+      // even when its range cannot reach that surface. Thirty patrols meant sixty extra
+      // lights across the whole city. Keep a fixed budget near the player, like the street
+      // lamps do; a fixed count also avoids shader recompilation as patrols trade places.
+      for (const cop of lightOrder) {
+        cop.lightDistance = (cop.car.x - player.x) ** 2 + (cop.car.y - player.y) ** 2
+      }
+      lightOrder.sort((a, b) => a.lightDistance - b.lightDistance)
+      for (let i = 0; i < lightOrder.length; i++) {
+        const cop = lightOrder[i]
+        if (cop.headlight) cop.headlight.visible = i < MAX_LIT_COPS
+        if (cop.tail) cop.tail.visible = i < MAX_LIT_COPS
+      }
       // Light every cop car. The bar strobes blue/red on opposite beats whenever they are actually
       // responding (stars > 0); parked-up patrols keep it dark, which is what makes the strobe mean
       // something when it starts. Headlights and tail glow follow the clock like any other car's.

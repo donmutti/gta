@@ -11,11 +11,12 @@
 //   node tools/probe.mjs 'window.__props'
 //   node tools/probe.mjs 'window.game.world.edges.length'
 //   node tools/probe.mjs --file check.js          # expression body from a file, for long ones
+//   node tools/probe.mjs --file check.js --width 1920 --height 1080 --dpr 2 --screenshot /tmp/game.png
 //
 // The expression is evaluated in the page with the game fully booted, so window.game, THREE and the
 // world model are all in scope. It runs ONE expression and exits; nothing here drives the frame loop.
 import {spawn} from 'node:child_process';
-import {readFileSync} from 'node:fs';
+import {readFileSync, writeFileSync} from 'node:fs';
 import net from 'node:net';
 
 const arg = (name, dflt) => {
@@ -25,7 +26,16 @@ const arg = (name, dflt) => {
 const FILE = arg('file', null);
 const URL = arg('url', 'http://localhost:5199');
 const WAIT = Number(arg('wait', 2500));    // ms after boot, for streamed geometry to settle
-const positional = process.argv.slice(2).filter(a => !a.startsWith('--'));
+const WIDTH = Number(arg('width', 1000));
+const HEIGHT = Number(arg('height', 800));
+const DPR = Number(arg('dpr', 1));
+const SCREENSHOT = arg('screenshot', null);
+const valueOptions = new Set(['--file', '--url', '--wait', '--width', '--height', '--dpr', '--screenshot']);
+const positional = [];
+for (let i = 2; i < process.argv.length; i++) {
+  if (valueOptions.has(process.argv[i])) i++;
+  else if (!process.argv[i].startsWith('--')) positional.push(process.argv[i]);
+}
 const EXPR = FILE ? readFileSync(FILE, 'utf8') : positional[positional.length - 1];
 if (!EXPR) die('probe: give an expression, or --file with one in it');
 
@@ -41,6 +51,8 @@ const chrome = spawn(CHROME, [
 ], {stdio: 'ignore'});
 // Leaked headless Chromes were this project's main resource leak. Always trap the exit.
 process.on('exit', () => { try { chrome.kill('SIGKILL'); } catch { /* already gone */ } });
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => process.exit(130));
+setTimeout(() => die('probe: timed out after 180 seconds'), 180_000).unref();
 
 const waitPort = (p) => new Promise((res, rej) => {
   let n = 0;
@@ -66,11 +78,14 @@ function rpc(ws, id, method, params = {}) {
 
 try {
   await waitPort(PORT);
-  const tab = await (await fetch(`http://127.0.0.1:${PORT}/json/new?${URL}`, {method: 'PUT'})).json();
+  const tab = await (await fetch(`http://127.0.0.1:${PORT}/json/new?about:blank`, {method: 'PUT'})).json();
   const ws = new WebSocket(tab.webSocketDebuggerUrl);
   await new Promise((r, j) => { ws.addEventListener('open', r); ws.addEventListener('error', j); });
   let id = 1;
   await rpc(ws, id++, 'Runtime.enable');
+  await rpc(ws, id++, 'Emulation.setDeviceMetricsOverride', {
+    width: WIDTH, height: HEIGHT, deviceScaleFactor: DPR, mobile: false,
+  });
 
   // Console lines are worth keeping: the placement passes report their counts through console.info,
   // and an exception during scene build shows up here rather than in the expression's result.
@@ -78,12 +93,15 @@ try {
   ws.addEventListener('message', (ev) => {
     const m = JSON.parse(ev.data);
     if (m.method === 'Runtime.consoleAPICalled') {
-      logs.push(m.params.args.map(a => a.value ?? a.description ?? '').join(' '));
+      const line = m.params.args.map(a => a.value ?? a.description ?? '').join(' ');
+      logs.push(line);
+      if (process.argv.includes('--logs')) console.error(line);
     }
     if (m.method === 'Runtime.exceptionThrown') {
       logs.push('EXCEPTION ' + (m.params.exceptionDetails?.exception?.description ?? ''));
     }
   });
+  await rpc(ws, id++, 'Page.navigate', {url: URL});
 
   let booted = false;
   for (let i = 0; i < 160; i++) {
@@ -104,7 +122,10 @@ try {
     console.error(out.exceptionDetails.exception?.description ?? JSON.stringify(out.exceptionDetails));
     process.exit(1);
   }
-  if (process.argv.includes('--logs')) console.error(logs.join('\n'));
+  if (SCREENSHOT) {
+    const shot = await rpc(ws, id++, 'Page.captureScreenshot', {format: 'png'});
+    writeFileSync(SCREENSHOT, Buffer.from(shot.data, 'base64'));
+  }
 
   // Say what was looked at, even when the answer is nothing.
   //
