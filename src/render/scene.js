@@ -583,10 +583,19 @@ export function createScene(world) {
   // by standing 70m from a drop with a building between, where it disappeared completely. It draws
   // through geometry like a waypoint, because a player who has never seen this game has nothing
   // else telling them where to go.
-  const beaconMat = new THREE.MeshBasicMaterial({
-    color: 0xffc21f, transparent: true, opacity: 0.38, depthWrite: false, depthTest: false,
+  // One altitude for every pickup, above the tallest building in this city.
+  const beaconTop = world.buildings.reduce((top, b) => Math.max(top, seatGroundUnder(b.pts) + b.h + 60), 180);
+  const beaconMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, depthTest: false,
+    uniforms: {color: {value: new THREE.Color(0xffc21f)}},
+    vertexShader: `varying float beamHeight;
+      void main(){ beamHeight = uv.y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `uniform vec3 color; varying float beamHeight;
+      void main(){ float fade = 1.0 - smoothstep(0.6, 1.0, beamHeight);
+        gl_FragColor = vec4(color, 0.38 * fade); }`,
   });
-  const beacon = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.6, 90, 10, 1, true), beaconMat);
+  const beacon = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.6, 1, 10, 1, true), beaconMat);
+  beacon.userData.topAltitude = beaconTop;
   beacon.renderOrder = 999;          // after the city, so 'no depth test' means 'over it'
   beacon.name = 'deliveryBeacon';   // named so a test can find THIS cylinder, not any of the hundreds in the city
   beacon.frustumCulled = false;
@@ -596,7 +605,11 @@ export function createScene(world) {
   /** Map coordinates, or null to hide it. The coordinate law: three.z is -map.y. */
   function setBeacon(p) {
     beacon.visible = !!p;
-    if (p) beacon.position.set(p.x, groundHeight(p.x, -p.y) + 45, -p.y);
+    if (p) {
+      const bottom = surfaceHeight(p.x, -p.y);
+      beacon.scale.y = Math.max(1, beaconTop - bottom);
+      beacon.position.set(p.x, bottom + beacon.scale.y / 2, -p.y);
+    }
   }
 
   return {scene, camera, renderer, render, update, follow, resize, makeCar, makeDog, makePigeonFleet, toV3, setBeacon, setSignalPhase: signals.setPhase};
