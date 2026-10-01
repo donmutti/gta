@@ -8,29 +8,21 @@
 // are metres relative to the slice centre (which is y=0), so the origin sits at ground level and the
 // city rises toward the plateau and drops into the Pfaffenthal gorge exactly as the real land does.
 
-// TERRAIN IS OFF. Flip this to true to bring the hills back — nothing else needs changing.
-//
-// The hills were built and then switched off deliberately. With the car still driving on a flat
-// plane, a terraned world broke in ways that ruined simply LOOKING at the city: traffic flew above
-// or sank through the roads, and the displaced ground mesh cut black planes across the view. Every
-// consumer of this module already treats "no field installed" as a flat world (groundHeight returns
-// 0, groundNormal returns straight up, the seating helpers return 0), so refusing to install the
-// field flattens the ENTIRE city in one place — geometry, props, decor, easter eggs and all —
-// without touching a single call site. The fetch, the baked heightfield.json and all the seating
-// maths stay exactly as they were, so reviving the hills is this one flag plus the car work that
-// was never finished: read groundHeight for the car's Y and groundNormal for its tilt.
-const TERRAIN_ENABLED = false;
-
 let FIELD = null;   // {nx, ny, minX, maxX, minY, maxY, heights[]}
 
-/** Install the baked heightfield (from public/data/heightfield.json). Ignored while terrain is off. */
-export function setHeightfield(hf) { FIELD = TERRAIN_ENABLED ? hf : null; }
+/** Install the baked heightfield (from public/data/heightfield.json). Validated by the baking pipeline. */
+export function setHeightfield(hf) {
+  if (!hf) { FIELD = null; return; }
+  if (hf.nx < 2 || hf.ny < 2 || hf.heights.length !== hf.nx * hf.ny ||
+      !hf.heights.every(Number.isFinite) || hf.maxX <= hf.minX || hf.maxY <= hf.minY) throw new Error('Invalid terrain grid');
+  FIELD = {...hf, heights: [...hf.heights]};
+}
 
 /** True once a real field is loaded — callers can cheaply skip terrain math before then. */
 export function hasTerrain() { return FIELD !== null; }
 
 /**
- * Ground elevation (world Y) at world (x, z). Bilinear over the baked grid; clamps at the edges so
+ * Ground elevation (world Y) at world (x, z). Piecewise planar over the rendered grid triangles; clamps at the edges so
  * points just outside the slice ride the boundary height rather than snapping to zero. Returns 0
  * when no field is loaded, so every caller is safe to use it before the fetch resolves.
  */
@@ -49,9 +41,9 @@ export function groundHeight(x, z) {
   const h = f.heights;
   const h00 = h[iy * f.nx + ix], h10 = h[iy * f.nx + ix2];
   const h01 = h[iy2 * f.nx + ix], h11 = h[iy2 * f.nx + ix2];
-  const a = h00 + (h10 - h00) * fx;
-  const b = h01 + (h11 - h01) * fx;
-  return a + (b - a) * fy;
+  return fx >= fy
+    ? h00 + (h10 - h00) * fx + (h11 - h10) * fy
+    : h00 + (h11 - h01) * fx + (h01 - h00) * fy;
 }
 
 /**
@@ -80,9 +72,13 @@ export function groundNormal(x, z, step = 1.5) {
  */
 export function minGroundUnder(pts) {
   let lo = Infinity;
-  for (const [px, py] of pts) {
-    const g = groundHeight(px, -py);
-    if (g < lo) lo = g;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const steps = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 4));
+    for (let j = 0; j <= steps; j++) {
+      const t = j / steps;
+      lo = Math.min(lo, groundHeight(a[0] + (b[0] - a[0]) * t, -a[1] - (b[1] - a[1]) * t));
+    }
   }
   return lo === Infinity ? 0 : lo;
 }
@@ -100,4 +96,84 @@ export function seatGroundUnder(pts) {
   for (const [px, py] of pts) { sx += px; sy += py; }
   const n = pts.length || 1;
   return groundHeight(sx / n, -(sy / n));
+}
+
+/** Grid metadata used to build the exact same surface as the sampler. */
+export function terrainField() { return FIELD; }
+
+const spans = [];
+/** Named bridge spans use their bank elevations, not the valley floor below them. */
+export function configureTerrain(world) {
+  spans.length = 0;
+  if (!FIELD) return;
+  const airport = world.findel;
+  if (airport?.core) {
+    const {x0, x1, y0, y1} = airport.core;
+    const h = groundHeight(airport.anchor[0], -airport.anchor[1]);
+    for (let j = 0; j < FIELD.ny; j++) for (let i = 0; i < FIELD.nx; i++) {
+      const x = FIELD.minX + i * (FIELD.maxX - FIELD.minX) / (FIELD.nx - 1);
+      const y = FIELD.minY + j * (FIELD.maxY - FIELD.minY) / (FIELD.ny - 1);
+      const distance = Math.max(x0 - x, x - x1, y0 - y, y - y1, 0);
+      const t = Math.max(0, 1 - distance / 80);
+      const smooth = t * t * (3 - 2 * t);
+      const k = j * FIELD.nx + i;
+      FIELD.heights[k] += (h - FIELD.heights[k]) * smooth;
+    }
+  }
+  const groups = new Map();
+  for (const edge of world.edges) {
+    edge.bridge = /^Pont /i.test(edge.name ?? '');
+    if (!edge.bridge) continue;
+    if (!groups.has(edge.name)) groups.set(edge.name, []);
+    groups.get(edge.name).push(edge);
+  }
+  for (const edges of groups.values()) {
+    const points = edges.flatMap(e => e.pts);
+    let a = points[0], b = points[1], longest = 0;
+    for (const p of points) for (const q of points) {
+      const d = (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2;
+      if (d > longest) { longest = d; a = p; b = q; }
+    }
+    const ha = groundHeight(a[0], -a[1]), hb = groundHeight(b[0], -b[1]);
+    const height = p => {
+      const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / longest));
+      return ha + (hb - ha) * t;
+    };
+    for (const edge of edges) {
+      edge.deckHeights = edge.pts.map(height);
+      for (let i = 1; i < edge.pts.length; i++) {
+        spans.push({a: edge.pts[i - 1], b: edge.pts[i], ha: edge.deckHeights[i - 1], hb: edge.deckHeights[i], half: edge.width / 2 + 2.4});
+      }
+    }
+  }
+}
+
+/** Closest vertical surface preserves an actor's level beneath an overpass. */
+export function surfaceHeight(x, z, reference, ceiling = Infinity) {
+  const ground = groundHeight(x, z);
+  let selected = ground;
+  for (const s of spans) {
+    const dx = s.b[0] - s.a[0], dy = s.b[1] - s.a[1];
+    const t = ((x - s.a[0]) * dx + (-z - s.a[1]) * dy) / (dx * dx + dy * dy);
+    if (t < -0.002 || t > 1.002) continue;
+    if (Math.hypot(x - s.a[0] - t * dx, -z - s.a[1] - t * dy) > s.half) continue;
+    const h = s.ha + (s.hb - s.ha) * Math.max(0, Math.min(1, t));
+    if (h < ground - 0.5 || h > ceiling) continue;
+    if (reference === undefined ? h > selected : Math.abs(h - reference) < Math.abs(selected - reference)) selected = h;
+  }
+  return selected;
+}
+
+export function surfaceNormal(x, z, reference, step = 1.5) {
+  const selected = surfaceHeight(x, z, reference);
+  for (const s of spans) {
+    const dx = s.b[0] - s.a[0], dy = s.b[1] - s.a[1], length2 = dx * dx + dy * dy;
+    const t = ((x - s.a[0]) * dx + (-z - s.a[1]) * dy) / length2;
+    if (t < 0 || t > 1 || Math.hypot(x - s.a[0] - t * dx, -z - s.a[1] - t * dy) > s.half) continue;
+    if (Math.abs(s.ha + (s.hb - s.ha) * t - selected) > 0.01) continue;
+    const gx = (s.hb - s.ha) * dx / length2, gz = -(s.hb - s.ha) * dy / length2;
+    const length = Math.hypot(gx, 1, gz);
+    return {x: -gx / length, y: 1 / length, z: -gz / length};
+  }
+  return groundNormal(x, z, step);
 }

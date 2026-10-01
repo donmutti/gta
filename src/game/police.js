@@ -1,3 +1,4 @@
+import {groundHeight, surfaceHeight} from '../world/terrain.js'
 // The wanted system and the cars that enforce it.
 //
 // Deliberately a toy, not a crime sim: you knock people over, they flip and get up rubbing their
@@ -324,6 +325,8 @@ export function createPolice(world, scene, makeCar, signals) {
         const dx = ped.x - player.x, dy = ped.y - player.y
         if (dx * dx + dy * dy > HIT_RADIUS * HIT_RADIUS) continue
         if (!moving) continue
+        const height = ped.edge.bridge ? surfaceHeight(ped.x, -ped.y) : groundHeight(ped.x, -ped.y)
+        if (Math.abs(height - (player.elevation ?? groundAt(player.x, player.y))) > 2.5) continue
         if (inBox(ped.x, ped.y, player.x, player.y, fx, fy, HERO_BOX, SHOULDER)) {
           this.knock(ped, player)
         }
@@ -442,6 +445,7 @@ export function createPolice(world, scene, makeCar, signals) {
     },
     resolveContacts(player, traffic) {
       const separate = (a, b) => {
+        if (Math.abs((a.elevation ?? 0) - (b.elevation ?? 0)) > 3) return
         const hit = boxContact(a.x, a.y, a.heading, HERO_BOX, b.x, b.y, b.heading, HERO_BOX)
         if (!hit) return
         const push = (hit.depth + 0.001) / 2
@@ -463,7 +467,7 @@ export function createPolice(world, scene, makeCar, signals) {
           traffic?.collideWith(cop.car)
         }
       }
-      for (const cop of cops) orientToGround(cop.mesh, cop.car.x, cop.car.y, cop.car.heading, groundAt(cop.car.x, cop.car.y))
+      for (const cop of cops) orientToGround(cop.mesh, cop.car.x, cop.car.y, cop.car.heading, cop.car.elevation = groundAt(cop.car.x, cop.car.y, cop.car.elevation))
     },
   }
 }

@@ -60,7 +60,8 @@ Then do these, in this order, because they are what the city is for:
 | `C` | change camera: chase, then birdseye |
 | scroll | zoom, in birdseye |
 | `M` | full-screen map — the world pauses and goes silent |
-| `R` | respawn on the nearest big street |
+| `R` | recover at the same location with a short drop |
+| `H` | hold to sound the horn |
 | `P` | pause |
 | `F3` | position, bearing, clock and frame counter |
 
@@ -190,3 +191,13 @@ Police lighting has a budget: the four patrols nearest the player cast real head
 `tools/birdseye.mjs` photographs the running city from above, because a complaint about a world is almost always a complaint about its layout and you cannot see a layout from inside a car. `tools/portrait.mjs` frames a single vehicle. `tools/probe.mjs` asks the running game a question and prints the answer. `tools/clip.mjs` records a GIF or an MP4 with the game's own sound.
 
 Built by a team of cooperating Claude Code sessions, one file each, with every change verified by a picture or a number rather than an assertion.
+
+## Terrain
+
+Luxembourg's hills now use the [ACT 2024 bare-earth LiDAR dataset](https://data.public.lu/fr/datasets/lidar-2024-releve-3d-du-territoire-luxembourgeois/) (CC0). The national source has 0.5 m resolution; the game bakes an 8 m grid with about 122 m of relief. Roads, paths, trees and vehicles share the rendered ground surface. Building foundations extend downhill, rivers follow their beds, and named bridges retain separate deck and valley levels. Driving uphill consumes more acceleration; downhill grades add speed. Grass sits below asphalt to avoid Z-fighting.
+
+The airport is relocated for gameplay and uses a flat graded platform. Bridge deck heights interpolate the terrain at the banks; this is not a surveyed civil-engineering model. The committed heightfield is served locally with the rest of the game, so play never calls an elevation service.
+
+To rebake the heightfield, install `tools/terrain-requirements.txt` in a Python virtual environment and run `TERRAIN_PYTHON=/path/to/venv/bin/python node tools/fetch-terrain.mjs`. Rasterio reads only the city window through HTTP range requests, rather than downloading the entire national raster.
+
+`node --test tools/terrain.test.mjs tools/vehicles.test.mjs tools/traffic-path.test.mjs` checks terrain/paving agreement, bridge levels, hull contacts and lane curves. `tools/terrain-view.js` is a browser expression for an oblique terrain screenshot with `tools/probe.mjs --file tools/terrain-view.js --screenshot /tmp/terrain.png`.

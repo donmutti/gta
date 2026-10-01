@@ -60,6 +60,7 @@ process.on('uncaughtException', (e) => { reap(); console.error(e); process.exit(
 process.on('unhandledRejection', (e) => { reap(); console.error(e); process.exit(1); });
 
 const finish = (code, msg) => { console.log(msg); reap(); process.exit(code); };
+setTimeout(() => finish(1, 'SMOKE FAIL: timed out after 120 seconds'), 120_000).unref();
 
 try {
   await waitPort(PORT);

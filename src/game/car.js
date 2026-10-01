@@ -1,3 +1,5 @@
+import {groundHeight, surfaceHeight, seatGroundUnder} from '../world/terrain.js'
+import {groundNormalAt} from '../world/ground.js'
 // Arcade car. A rear-wheel bicycle model with an explicit grip term, which is what buys drift
 // without a physics engine: the car carries a velocity VECTOR, not a speed along its nose, and the
 // difference between where it points and where it is going is the whole feel of the thing.
@@ -87,6 +89,8 @@ function resolveBuildings(car, world, scratch) {
   // one resolution, and the car can always drive out of it.
   let deepest = null
   for (const b of candidates) {
+    // A footprint below a bridge is not a wall across its deck.
+    if (car.elevation !== undefined && car.elevation > seatGroundUnder(b.pts) + (b.h ?? 12)) continue
     const {minX, minY, maxX, maxY} = b.aabb
     if (car.x < minX - CAR_RADIUS || car.x > maxX + CAR_RADIUS) continue
     if (car.y < minY - CAR_RADIUS || car.y > maxY + CAR_RADIUS) continue
@@ -156,6 +160,9 @@ function resolveObstacles(car, world, scratch) {
   const near = world.obstacles.near(car.x, car.y, CAR_RADIUS + 1, scratch)
   let hit = false
   for (const o of near) {
+    const base = o.ref?.y ?? (o.kind === 'lamp' ? surfaceHeight(o.x, -o.y) : groundHeight(o.x, -o.y))
+    const height = o.kind === 'tree' || o.kind === 'forest' ? 20 : o.kind === 'lamp' ? 8 : 4
+    if (car.elevation !== undefined && (car.elevation > base + height || car.elevation + 1.8 < base)) continue
     if (o.broken) continue           // a stump or a lamp lying in the gutter is not a standing post
     const dx = car.x - o.x, dy = car.y - o.y
     const min = CAR_RADIUS + o.r
@@ -238,6 +245,15 @@ export function roadUnder(world, x, y, r = 24) {
  * this assumes a sane frame.
  */
 export function stepCar(car, input, dt, world, scratch = []) {
+  if (car.airborne) {
+    // Tyres cannot accelerate, brake or steer in the air. Preserve launch momentum.
+    car.x += car.vx * dt
+    car.y += car.vy * dt
+    car.contact = resolveBuildings(car, world, scratch)
+    if (resolveObstacles(car, world, scratch)) car.contact = true
+    car.speed = car.vx * Math.cos(car.heading) + car.vy * Math.sin(car.heading)
+    return car
+  }
   // Steering follows the command rather than snapping to it, which is most of what makes a
   // keyboard car feel like a car instead of a cursor.
   const want = input.steer * steerLimit(car.speed)
@@ -266,6 +282,12 @@ export function stepCar(car, input, dt, world, scratch = []) {
   if (!car.onRoad) accel -= Math.sign(forward) * OFFROAD_DRAG * Math.min(1, speedAbs / 3)
   if (input.handbrake) accel -= Math.sign(forward) * 8
 
+  // Gravity along the road grade. Idle cars keep their parking brake; moving cars
+  // gain speed downhill and need more throttle uphill.
+  if (speedAbs > 0.2 || Math.abs(input.throttle) > 0.01) {
+    const n = groundNormalAt(car.x, car.y, car.elevation)
+    accel += 9.81 * n.y * (n.x * fx - n.z * fy)
+  }
   const nextForward = forward + accel * dt
   // Rolling resistance must not drag a stopped car backwards.
   const stopped = Math.sign(nextForward) !== Math.sign(forward) && Math.abs(input.throttle) < 0.01

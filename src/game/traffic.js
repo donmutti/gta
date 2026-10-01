@@ -1,3 +1,4 @@
+import {groundHeight, surfaceHeight} from '../world/terrain.js'
 // Ambient traffic. The thing that turns a city you drive through into a city that is already busy
 // without you.
 //
@@ -7,7 +8,7 @@
 // nobody watches a background car closely enough to notice it is on rails.
 
 import {makeCarFleet} from '../render/car.js'
-import {fleetBox, VEHICLE_BOX, boxContact} from './vehicles.js'
+import {fleetBox, VEHICLE_BOX, boxContact, busImpulse} from './vehicles.js'
 import {STOP_LINE, GREEN_LIGHT} from './signals.js'
 import {createLanePath, createJunctionPath, samplePath} from './traffic-path.js'
 
@@ -57,7 +58,7 @@ export function createTraffic(world, scene, signals) {
   const rand = mulberry(770119)
   // Only roads wide enough to have two directions; a car crawling down a 4m service alley reads
   // as a mistake rather than as traffic.
-  const usable = world.edges.filter(e => e.width >= 6 && e.length > 20 && !e.pedestrianZone)
+  const usable = world.edges.filter(e => (e.width >= 6 || e.bridge && e.oneway && e.width >= 3.2) && e.length > 20 && !e.pedestrianZone)
   if (!usable.length) return {cars: [], update() {}}
 
   const CELL = 64
@@ -140,6 +141,7 @@ export function createTraffic(world, scene, signals) {
     car.x = pose.x + Math.sin(pose.heading) * car.pullOver
     car.y = pose.y - Math.cos(pose.heading) * car.pullOver
     car.heading = car.face = pose.heading
+    car.elevation = (car.edge.bridge || car.junction?.edge.bridge) ? surfaceHeight(car.x, -car.y) : groundHeight(car.x, -car.y)
     car.snapFace = false
   }
 
@@ -147,7 +149,7 @@ export function createTraffic(world, scene, signals) {
     if (car.junction) return
     const node = car.dir > 0 ? car.edge.b : car.edge.a
     let options = (world.nodes[node]?.edges ?? []).map(id => world.edges[id])
-      .filter(edge => edge.width >= 6 && !edge.pedestrianZone && enterable(edge, node))
+      .filter(edge => (edge.width >= 6 || edge.bridge && edge.oneway && edge.width >= 3.2) && !edge.pedestrianZone && enterable(edge, node))
     // Returning along the incoming edge is a dead-end manoeuvre, not a random choice at
     // every crossroads. The old choice frequently asked buses to reverse direction in place.
     const onward = options.filter(edge => edge !== car.edge)
@@ -198,6 +200,7 @@ export function createTraffic(world, scene, signals) {
    * position, which is the failure that would have cars driving through walls afterwards.
    */
   function shunt(car, player) {
+    if (Math.abs((car.elevation ?? groundHeight(car.x, -car.y)) - (player.elevation ?? groundHeight(player.x, -player.y))) > 3) return false
     const hit = boxContact(car.x + car.ox, car.y + car.oy, car.face + car.spin, car.box,
       player.x, player.y, player.heading, VEHICLE_BOX.car)
     if (!hit) return false
@@ -212,6 +215,18 @@ export function createTraffic(world, scene, signals) {
     const closing = (player.vx - cvx) * nx + (player.vy - cvy) * ny
     player.contact = true
     if (closing <= 0) return false
+
+    if (car.box === VEHICLE_BOX.bus) {
+      const impulse = busImpulse(car.x + car.ox, car.y + car.oy, car.face + car.spin,
+        player.x, player.y, nx, ny, closing)
+      car.ovx += impulse.vx
+      car.ovy += impulse.vy
+      car.spinRate += impulse.spin
+      player.vx -= nx * impulse.playerImpulse
+      player.vy -= ny * impulse.playerImpulse
+      car.cruise = 0
+      return closing > 0.5
+    }
 
     const punch = Math.min(closing, 24)
     car.ovx += nx * punch * 0.55
@@ -234,6 +249,7 @@ export function createTraffic(world, scene, signals) {
       let contacts = 0
       for (let i = 0; i < cars.length; i++) for (let j = i + 1; j < cars.length; j++) {
         const a = cars[i], b = cars[j]
+        if (Math.abs(a.elevation - b.elevation) > 3) continue
         const hit = boxContact(a.x + a.ox, a.y + a.oy, a.face + a.spin, a.box,
           b.x + b.ox, b.y + b.oy, b.face + b.spin, b.box, 0.02)
         if (!hit) continue
@@ -253,7 +269,8 @@ export function createTraffic(world, scene, signals) {
       const car = cars[i]
       const x = car.x + car.ox, y = car.y + car.oy
       const hide = eye && (x - eye.x) ** 2 + (y - eye.y) ** 2 < LENS_RADIUS ** 2
-      fleet.setAt(i, hide ? 1e6 : x, hide ? 1e6 : -y, car.face + car.spin + Math.PI / 2, car.paint)
+      car.elevation = (car.edge.bridge || car.junction?.edge.bridge) ? surfaceHeight(x, -y) : groundHeight(x, -y)
+      fleet.setAt(i, hide ? 1e6 : x, hide ? 1e6 : -y, car.face + car.spin + Math.PI / 2, car.paint, car.elevation)
     }
   }
 
@@ -321,7 +338,7 @@ export function createTraffic(world, scene, signals) {
         const velocity = car.cruise ?? car.speed
         const stopIn = box.halfL + Math.max(5, velocity * 0.7 + (velocity * velocity) / (2 * EMERGENCY_BRAKE))
         const personAhead = crowd
-          ? crowd.pathAhead(car.x + car.ox, car.y + car.oy, car.face, box.halfW + 0.5, stopIn)
+          ? crowd.pathAhead(car.x + car.ox, car.y + car.oy, car.face, box.halfW + 0.5, stopIn, car.elevation)
           : 0
         const panic = personAhead > 0
 
@@ -445,7 +462,7 @@ export function createTraffic(world, scene, signals) {
           // be nothing like their cruise. Measured undefined on the first attempt at this.
           crowd.strike(car.x + car.ox, car.y + car.oy, car.face + car.spin,
             Math.cos(car.face) * car.cruise, Math.sin(car.face) * car.cruise,
-            car.cruise, box)
+            car.cruise, box, car.elevation)
         }
 
       }

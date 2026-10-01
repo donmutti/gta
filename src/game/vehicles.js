@@ -131,3 +131,16 @@ export function vehicleThreat(px, py, pvx, pvy, vehicle, horizon = 2) {
   const side = across < 0 ? -1 : 1
   return {time: enter, nx: -fy * side, ny: fx * side}
 }
+
+/** Bus response at the struck point, with mass and yaw inertia in car-mass units. */
+export function busImpulse(cx, cy, heading, px, py, nx, ny, closing) {
+  const box = VEHICLE_BOX.bus, mass = 6
+  const fx = Math.cos(heading), fy = Math.sin(heading)
+  const along = Math.max(-box.halfL, Math.min(box.halfL, (px-cx)*fx+(py-cy)*fy))
+  const across = Math.max(-box.halfW, Math.min(box.halfW, -(px-cx)*fy+(py-cy)*fx))
+  const rx = along*fx-across*fy, ry = along*fy+across*fx
+  const lever = rx*ny-ry*nx
+  const inertia = mass*(box.halfL**2+box.halfW**2)/3
+  const impulse = Math.max(0,closing)*1.15/(1+1/mass+lever*lever/inertia)
+  return {vx:nx*impulse/mass,vy:ny*impulse/mass,spin:lever*impulse/inertia,playerImpulse:impulse}
+}

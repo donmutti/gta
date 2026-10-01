@@ -161,7 +161,7 @@ export function createHud() {
   const stick = coarse && touchLayout() !== 'buttons'
   hint.innerHTML = '<div style="font-size:13px;opacity:.7;letter-spacing:2px;margin-bottom:6px">LUXEMBOURG</div>'
     + (!coarse
-      ? 'W A S D  or  arrows to drive<br>SPACE to handbrake — this is how you drift<br>R to respawn · P to pause · C to change camera'
+      ? 'W A S D  or  arrows to drive<br>SPACE to handbrake — this is how you drift<br>R to recover · H to honk · P to pause · C to change camera'
       : stick
         ? 'Left thumb on the stick — it comes to your thumb<br>Push up to go, down to brake · Drift to slide<br>Menu for map, camera, fullscreen'
         : 'Left thumb anywhere to steer<br>Go and Brake to drive · Drift to slide<br>Menu for map, camera, fullscreen')

@@ -1,0 +1,4 @@
+rasterio==1.5.2
+pyproj==3.8.0
+numpy==2.5.0
+certifi>=2026.0

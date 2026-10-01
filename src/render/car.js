@@ -1,3 +1,4 @@
+import {groundHeight, surfaceNormal} from '../world/terrain.js';
 // Vehicles. One table of body specs (car / wagon / van / bus) drives BOTH the hero car and the
 // instanced ambient fleet, so an NPC and the player's car are the same shape language.
 //
@@ -473,11 +474,17 @@ export function makeCarFleet(count) {
   const prevR = new Float32Array(count), spinA = new Float32Array(count), steerA = new Float32Array(count);
   const mW = new THREE.Matrix4(), mL = new THREE.Matrix4(), mS = new THREE.Matrix4(), mOut = new THREE.Matrix4();
   const c = new THREE.Color();
+  const up = new THREE.Vector3(0, 1, 0), normal = new THREE.Vector3(), tilt = new THREE.Quaternion();
+  const slope = new THREE.Matrix4();
 
-  const setAt = (i, x, z, rotY, colourIndex = 0) => {
+  const setAt = (i, x, z, rotY, colourIndex = 0, elevation = groundHeight(x, z)) => {
     const r = route[i]; if (!r) return;
     const {body, trim, wheels, spec} = meshes[r.type];
-    mW.makeRotationY(rotY).setPosition(x, 0, z);
+    const n = surfaceNormal(x, z, elevation);
+    normal.set(n.x, n.y, n.z);
+    tilt.setFromUnitVectors(up, normal);
+    slope.makeRotationFromQuaternion(tilt);
+    mW.makeRotationY(rotY).premultiply(slope).setPosition(x, elevation, z);
     body.setMatrixAt(r.local, mW); trim.setMatrixAt(r.local, mW);
     c.set(FLEET_PALETTE[colourIndex % FLEET_PALETTE.length]);
     body.setColorAt(r.local, c);

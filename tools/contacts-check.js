@@ -15,12 +15,14 @@
       let vehicles = 0, people = 0
       for (let i = 0; i < bodies.length; i++) for (let j = i + 1; j < bodies.length; j++) {
         const a = bodies[i], b = bodies[j]
+        if (Math.abs(a.elevation - b.elevation) > 3) continue
         const hit = boxContact(a.x, a.y, a.heading, a.box, b.x, b.y, b.heading, b.box)
         if (hit && hit.depth > 0.03) { vehicles++; maxDepth = Math.max(maxDepth, hit.depth) }
       }
       for (const ped of game.crowd.peds) {
         if (ped.down > 0) continue
         for (const body of bodies) {
+          if (Math.abs((ped.elevation ?? body.elevation) - body.elevation) > 2.5) continue
           const hit = personContact(ped.x, ped.y, body.x, body.y, body.heading, body.box)
           if (hit && hit.depth > 0.03) people++
         }

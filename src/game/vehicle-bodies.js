@@ -22,7 +22,7 @@ export function createVehicleBodies(player, traffic, police) {
         body.heading = ambient ? car.face + car.spin : car.heading
         body.vx = ambient ? Math.cos(car.face) * (car.cruise ?? 0) + car.ovx : car.vx
         body.vy = ambient ? Math.sin(car.face) * (car.cruise ?? 0) + car.ovy : car.vy
-        body.elevation = groundAt(body.x, body.y)
+        body.elevation = car.elevation ?? groundAt(body.x, body.y)
         bodies.push(body)
       }
       return bodies

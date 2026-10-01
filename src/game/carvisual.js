@@ -40,7 +40,7 @@ const otherQ = new THREE.Quaternion()
  * because nobody is watching a pursuing car closely enough to catch a snapped kerb.
  */
 export function orientToGround(mesh, x, y, heading, height) {
-  const n = groundNormalAt(x, y)
+  const n = groundNormalAt(x, y, height)
   otherNormal.set(n.x, n.y, n.z)
   if (otherNormal.lengthSq() < 1e-6) otherNormal.copy(WORLD_UP)
   otherNormal.normalize()
@@ -95,12 +95,12 @@ export function updateCarVisual(v, car, dt) {
   // standing on, then apply the car's own yaw, braking pitch and cornering roll INSIDE that frame.
   // Done the other way round the car leans relative to the world instead of relative to the road,
   // which on a camber looks like the suspension is broken rather than like the hill is tilted.
-  const n = groundNormalAt(car.x, car.y)
+  const n = groundNormalAt(car.x, car.y, car.elevation)
   targetNormal.set(n.x, n.y, n.z)
   if (targetNormal.lengthSq() < 1e-6) targetNormal.copy(WORLD_UP)
   targetNormal.normalize()
   // Ease onto the slope so a kerb or a heightfield seam does not snap the body.
-  slopeNormal.lerp(targetNormal, Math.min(1, SLOPE_SETTLE * dt)).normalize()
+  if (!car.airborne) slopeNormal.lerp(targetNormal, Math.min(1, SLOPE_SETTLE * dt)).normalize()
   alignQ.setFromUnitVectors(WORLD_UP, slopeNormal)
 
   bodyE.set(v.pitch, car.heading + Math.PI / 2, v.roll, 'YXZ')

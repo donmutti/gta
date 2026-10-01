@@ -39,7 +39,7 @@ export function createInput() {
     // Never swallow the browser's own shortcuts; only claim the keys the game drives with.
     if (isKey(e, 'KeyW', 'KeyS', 'KeyA', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space')) e.preventDefault()
     down.add(e.code)
-    if (e.code === 'KeyR') state.respawn = true
+    if (e.code === 'KeyR' && !e.repeat) state.respawn = true
     if (e.code === 'KeyP') state.paused = !state.paused
     // One-shots for the full-screen map. Repeats are ignored so holding M does not strobe it.
     if (e.code === 'KeyM' && !e.repeat) state.mapToggle = true
@@ -91,6 +91,7 @@ export function createInput() {
       if (touch.steer === 0 && Math.abs(touchSteer) < 0.01) touchSteer = 0
       state.steer = clamp(keySteer + touchSteer)
 
+      state.horn = held('KeyH')
       state.handbrake = held('Space') || touch.handbrake
       return state
     },

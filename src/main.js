@@ -1,11 +1,14 @@
+import {recoverCar} from './game/recovery.js'
+import {stepVertical} from './game/vertical.js'
 // Entry point and frame loop. Owns the clock, the input, the car and the camera; asks the renderer
 // for a scene and hands it nothing but numbers. See INTERFACES.md — createScene's return is the
 // only thing this file may rely on, and it never reaches into a material.
 
 import * as THREE from 'three'
+import {simulationDelta} from './game/timing.js'
 import {buildWorld} from './world/model.js'
 import {groundAt, setGroundSampler, setNormalSampler} from './world/ground.js'
-import {groundHeight, groundNormal} from './world/terrain.js'
+import {configureTerrain, surfaceHeight, surfaceNormal} from './world/terrain.js'
 import {createScene, makeCar} from './render/scene.js'
 import {createCar, stepCar} from './game/car.js'
 import {createInput} from './game/input.js'
@@ -52,13 +55,14 @@ const [city, findel] = await Promise.all([
 boot('laying out streets and buildings…')
 const world = buildWorld(city, findel)
 world.findel = findel
+configureTerrain(world)
 world.parcels = city.parcels ?? []     // cut by tools/parcels.mjs; the land under everything
 
 // S3: the simulation starts reading the terrain. groundAt takes WORLD MAP coordinates with +y
 // north; groundHeight takes Three's z, which is -mapY — the sign lives here, in one place, rather
 // than at each of the call sites that would otherwise each have to remember it.
-setGroundSampler((x, y) => groundHeight(x, -y))
-setNormalSampler((x, y) => (groundNormal ? groundNormal(x, -y) : {x: 0, y: 1, z: 0}))
+setGroundSampler((x, y, reference) => surfaceHeight(x, -y, reference))
+setNormalSampler((x, y, reference) => surfaceNormal(x, -y, reference))
 boot('raising the city…')
 const {scene, camera, renderer, update, follow, resize, setBeacon} = createScene(world)
 
@@ -194,14 +198,14 @@ let crowdsOn = true
 let lastSpeed = 0           // previous frame's speed, so an impact can be measured as speed lost
 let clock = 0               // seconds since load; drives the signal phases
 let gameHours = 20.4        // start in the blue hour; the first frame should be the good one
-let last = performance.now()
-let frames = 0, fpsAt = last, fps = 0
+let last = null
+let frames = 0, fpsAt = performance.now(), fps = 0
 let worstFrame = 0
 
 function frame(now) {
   // Clamp dt: a tab restored after a minute must not integrate a minute of physics in one step and
   // teleport the car through the city.
-  const dt = Math.min((now - last) / 1000, 1 / 20)
+  const dt = simulationDelta(now, last)
   last = now
 
   // Busted: the police have you. Same reset as a respawn, so the run simply ends and restarts.
@@ -216,15 +220,13 @@ function frame(now) {
     bustedThisFrame = true
     police.state.busted = false
     const s = spawnPoint()
-    car.x = s.x; car.y = s.y; car.heading = s.heading
+    car.x = s.x; car.y = s.y; car.heading = s.heading; car.elevation = undefined; car.airborne = false; car.verticalVelocity = 0
     car.vx = 0; car.vy = 0; car.speed = 0; car.steer = 0
     resetChase(chase)
   }
 
   if (input.takeRespawn()) {
-    const s = spawnPoint()
-    car.x = s.x; car.y = s.y; car.heading = s.heading
-    car.vx = 0; car.vy = 0; car.speed = 0; car.steer = 0
+    recoverCar(car, carVisual)
     resetChase(chase)
   }
 
@@ -273,6 +275,8 @@ function frame(now) {
     // Debug hook: Master photographs dawn/day/dusk without waiting real minutes for them.
     if (typeof window.__forceHours === 'number') gameHours = window.__forceHours
     stepCar(car, held, dt, world, scratch)
+    const landing = stepVertical(car, dt)
+    if (landing > 3) shakeCamera(chase, Math.min(12, landing * .4))
   }
 
   // Shake the camera by the ENERGY the impact took out of the car, not by the speed it lost.
@@ -312,7 +316,7 @@ function frame(now) {
       traffic.collideWith(car)
       crowd.resolveContacts(vehicleBodies.update(crowdsOn))
     }
-    audio.update(dt, car, police)
+    audio.update(dt, car, police, held.horn)
   }
   // Frozen: the simulation stops being ticked, so the audio must be told, or the engine hangs on
   // whatever note it was holding when the world stopped. Same for the map — a siren wailing over a
@@ -321,7 +325,8 @@ function frame(now) {
 
   // Publish positions only after contacts. Earlier draws left the car or fleet one frame
   // behind collision corrections, making otherwise separated bodies visibly intersect.
-  carMesh.position.set(car.x, groundAt(car.x, car.y), -car.y)
+  if (car.elevation === undefined) car.elevation = groundAt(car.x, car.y)
+  carMesh.position.set(car.x, car.elevation, -car.y)
   updateCarVisual(carVisual, car, dt)
   if (crowdsOn) {
     traffic.render(chase.ready ? chase : null)

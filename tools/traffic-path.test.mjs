@@ -32,3 +32,8 @@ test('junctions join both lane positions and tangents without a sideways jump', 
     assert.ok(error(p.heading, Math.atan2(q.y - p.y, q.x - p.x)) < 0.05)
   }
 })
+
+test('narrow one-way bridge has one centred lane', () => {
+  const edge={pts:[[0,0],[100,0]],width:3.4,oneway:true}
+  for(const lane of[-1,1])assert.equal(samplePath(createLanePath(edge,1,lane),50).y,0)
+})

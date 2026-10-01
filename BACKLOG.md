@@ -1,13 +1,8 @@
 # GTA Luxembourg — backlog
 
-## Real terrain (altitudes)
-The world is currently dead flat (y=0 everywhere). Luxembourg is famously hilly — the Pfaffenthal gorge, the plateau escarpments, the drop the Pont Rouge spans. Add real elevation:
-- Source a DEM (SRTM 30m, or Copernicus / IGN Luxembourg LiDAR for finer detail).
-- Sample elevation per road/building/tree vertex during the fetch; carry a `z`/height per point.
-- Raise the ground to a heightfield mesh; sit buildings on their footprint's ground height; ramp roads along the terrain.
-- Physics: the car currently drives on a plane — stepCar/collision would need to read ground height (slopes affect speed, the camera pitches). This is the big ripple, not the rendering.
-- The Pont Rouge and Pfaffenthal lift only make literal sense once the gorge has depth.
-Effort: large (touches fetch, world model, renderer, and physics). Deferred to the backlog on 2026-09-19.
+## Further terrain detail
+
+The 8 m ACT LiDAR terrain, named bridge decks, valley rivers, terrain placement and slope-aware driving are implemented. Further fidelity could use OSM bridge tags for unnamed spans, surveyed bridge deck altitudes instead of bank interpolation, and a finer riverbank mesh. The relocated airport deliberately uses a graded platform.
 
 ## Measure the frame rate on a phone, and turn the knobs only if it is bad
 The mobile controls shipped and the game was played on a real iPhone without anybody complaining about it being slow, so the performance work planned in `docs/mobile-controls.md` section 6 "Performance on a real phone" was never needed and no knob was turned. The number itself was never captured.

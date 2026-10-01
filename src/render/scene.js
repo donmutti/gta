@@ -8,6 +8,9 @@
 // night frame with six thousand individually lit windows is the shot, and it costs one material.
 import * as THREE from 'three';
 import {ROAD_KINDS, PROP_KINDS} from '../world/model.js';
+import {buildRivers} from './rivers.js';
+import {buildBridges} from './bridges.js';
+import {groundGeometry, drapeGeometry} from './terrain-mesh.js';
 import {makeCar, makeCarFleet} from './car.js';
 import {buildDecorations, buildSignals, buildCathedral} from './decor.js';
 import {propSpot, shoveClear, inFootprint, PROP_CLEAR} from './clearance.js';
@@ -17,7 +20,7 @@ import {createDestruction} from './debris.js';
 import {buildTownhouseRow} from './townhouse.js';
 import {buildFindel} from './airport.js';
 import {buildParks} from './parks.js';
-import {setHeightfield, groundHeight, minGroundUnder, seatGroundUnder, hasTerrain} from '../world/terrain.js';
+import {setHeightfield, groundHeight, minGroundUnder, seatGroundUnder, hasTerrain, surfaceHeight} from '../world/terrain.js';
 import {makeDog, makePigeonFleet} from './critters.js';
 import {buildEasterEggs} from './eastereggs.js';
 import {EffectComposer} from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -141,6 +144,7 @@ export function createScene(world) {
         }`,
     })
   );
+  sky.name = 'sky';
   scene.add(sky);
 
   // --- lights ------------------------------------------------------------------------------
@@ -156,27 +160,8 @@ export function createScene(world) {
   sun.shadow.bias = -0.0004;
   scene.add(ambient, sun, sun.target);
 
-  // --- ground: a heightfield mesh following the terrain, not a flat plane -------------------
-  // A subdivided plane whose every vertex is lifted to groundHeight(x,z). When no terrain is loaded
-  // groundHeight returns 0 and this is exactly the old flat plane. Segment count is coarse (the
-  // baked DEM is ~34x40) so this adds almost nothing.
-  const b = world.bounds;
-  const gw = b.maxX - b.minX + 800, gd = b.maxY - b.minY + 800;
-  const gcx = (b.minX + b.maxX) / 2, gcy = (b.minY + b.maxY) / 2;
-  const groundGeo = new THREE.PlaneGeometry(gw, gd, 80, 80);
-  {
-    const p = groundGeo.attributes.position;
-    for (let i = 0; i < p.count; i++) {
-      // plane is in its own XY (pre-rotation): local x -> world x, local y -> world +mapY.
-      const lx = p.getX(i), ly = p.getY(i);
-      const wx = gcx + lx, wz = -(gcy + ly);       // world x,z
-      p.setZ(i, groundHeight(wx, wz));             // Z here becomes world Y after the -90° X rotation
-    }
-    groundGeo.computeVertexNormals();
-  }
-  const ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({color: 0x49505b}));
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.set(gcx, -0.05, -gcy);
+  const ground = new THREE.Mesh(groundGeometry(), new THREE.MeshLambertMaterial({color: 0x49505b}));
+  ground.name = 'terrain';
   ground.receiveShadow = true;
   scene.add(ground);
 
@@ -190,20 +175,26 @@ export function createScene(world) {
   scene.add(parcels.group);
   scene.userData.parcels = parcels;
   // --- roads: one geometry of triangulated ribbons -----------------------------------------
-  const roads = buildRoads(world);
+  const landRoads = {...world, edges: world.edges.filter(e => !e.bridge)};
+  const roads = buildRoads(landRoads);
+  drapeGeometry(roads.geometry, 0.02);
+  roads.name = 'roads';
   scene.add(roads);
   // --- sidewalks: raised kerb + pavement strip on both sides of every drivable road. Purely
   // visual (Padawan's car collides only with footprints + point obstacles, never the ground, so a
   // 0.15m lip is invisible to physics). His pedestrians already stand at half-width+1.4 — dead
   // centre of this strip — so they land on it with no re-routing. -----------------------------
-  const sidewalks = buildSidewalks(world);
+  const sidewalks = buildSidewalks(landRoads);
+  drapeGeometry(sidewalks.geometry);
   sidewalks.name = 'sidewalks';
   scene.add(sidewalks);
   // --- road markings: centre dashes + zebra crossings, one mesh floating on the tarmac ------
-  const markings = buildMarkings(world);
+  const markings = buildMarkings(landRoads);
+  drapeGeometry(markings.geometry, 0.05);
   markings.name = 'markings';
   scene.add(markings);
   // --- the Pont Rouge: the one landmark that gets its own structure ------------------------
+  scene.add(buildBridges(world));
   scene.add(buildPontRouge(world));
   // --- city dressing + signal heads --------------------------------------------------------
   const decor = buildDecorations(world);
@@ -219,7 +210,7 @@ export function createScene(world) {
   const buildings = buildBuildings(world);
   scene.add(buildings.mesh);
   // --- green + water, flat tinted fills ----------------------------------------------------
-  scene.add(buildPolys(world.green, 0x2e4a33, 0.02));
+  scene.add(buildPolys(world.green, 0x2e4a33, 0));
   // The fetch collects `waterway=river` alongside real water AREAS, but a river is a LINE, not a
   // polygon — filling its 36km self-crossing ring painted a 13km² sheet of dark navy straight across
   // the city centre and over Place Guillaume. Until rivers are drawn as ribbons with a real width,
@@ -235,6 +226,7 @@ export function createScene(world) {
     return (maxX - minX) < 1500 && (maxY - minY) < 1500 && Math.abs(a / 2) < 50000;
   });
   scene.add(buildPolys(waterBodies, 0x1d3247, 0.01));
+  scene.add(buildRivers((world.water ?? []).filter(pts => !waterBodies.includes(pts))));
   // --- dress big bare plazas: real squares of open asphalt look unnaturally empty. Scatter grass
   // patches + planters in each big square's outer ring, skipping anything near a building or off the
   // road grid, so the middle stays drivable but the emptiness is broken up. -----------------------
@@ -403,17 +395,18 @@ export function createScene(world) {
     uniforms: {uOpacity: {value: 0}},
     vertexShader: `void main(){
       vec4 mv = modelViewMatrix * vec4(position, 1.0);
-      gl_PointSize = clamp(160.0 / -mv.z, 1.0, 3.0);
+      gl_PointSize = clamp(420.0 / -mv.z, 3.0, 18.0);
       gl_Position = projectionMatrix * mv;
     }`,
     fragmentShader: `uniform float uOpacity;
       void main(){
         vec2 q = gl_PointCoord - 0.5;
-        float a = (1.0 - smoothstep(0.05, 0.5, abs(q.x))) * (1.0 - abs(q.y) * 1.6);
-        gl_FragColor = vec4(0.62, 0.70, 0.82, max(a, 0.0) * uOpacity);
+        float a = (1.0 - smoothstep(0.015, 0.09, abs(q.x + q.y * 0.13))) * (1.0 - abs(q.y) * 1.6);
+        gl_FragColor = vec4(0.78, 0.85, 0.94, max(a, 0.0) * uOpacity);
       }`,
   });
   const rain = new THREE.Points(rainG, rainMat);
+  rain.name = 'rain';
   rain.frustumCulled = false;
   scene.add(rain);
   const rainFactor = (h) => {
@@ -429,6 +422,7 @@ export function createScene(world) {
   const _c = new THREE.Color();
   let skyTime = 0;
   function update(dt, gameHours) {
+    sky.position.copy(camera.position);
     skyTime += dt;
     skyUniforms.uTime.value = skyTime;
     if (fountainJets) fountainJets.step(dt);   // arc the fountain droplets
@@ -492,7 +486,7 @@ export function createScene(world) {
     // Surfaces join the cycle: honest mid-grey asphalt in sunshine (~0.3 albedo), dark and
     // pool-lit at night. A black road at midday was the last thing floating the city on void.
     mixColor(roads.material.color, 0x3c3f45, 0x6d6f73, dayness);
-    mixColor(ground.material.color, 0x44474d, 0x787a7e, dayness);
+    mixColor(ground.material.color, 0x222823, 0x303b2c, dayness);
 
     // Rain hour: gloomy and blueish, deliberately UNDERSTATED — the brief said natural. The
     // sun cools and softens rather than dying, clouds close over, fog breathes in, the road
@@ -520,14 +514,14 @@ export function createScene(world) {
     scene.fog.density = 0.0013 + night * 0.0007 + rainF * 0.0016;
     if (rainF > 0) {
       const rp = rainG.attributes.position;
-      const cx = followTarget ? followTarget.position.x : 0;
-      const cz = followTarget ? followTarget.position.z : 0;
+      // Local particles follow the camera at every altitude, including bridges and valleys.
+      rain.position.set(camera.position.x, camera.position.y - 12, camera.position.z);
       for (let i = 0; i < RAIN_N; i++) {
         let y = rp.array[i * 3 + 1] - dt * 34;
         if (y < 0) {
           y = 30 + Math.random() * 10;
-          rp.array[i * 3] = cx + (Math.random() - 0.5) * 90;
-          rp.array[i * 3 + 2] = cz + (Math.random() - 0.5) * 90;
+          rp.array[i * 3] = (Math.random() - 0.5) * 90;
+          rp.array[i * 3 + 2] = (Math.random() - 0.5) * 90;
         }
         rp.array[i * 3 + 1] = y;
       }
@@ -546,11 +540,11 @@ export function createScene(world) {
       if (hl) hl.intensity = night * 55; // candela — physical falloff eats small numbers
       const tg = followTarget.userData.tailGlow;
       if (tg) tg.intensity = 2.2 + night * 3.5; // brake/'on' glow pooling on the road behind
-      sun.position.set(p.x + sunDir.x * 400, Math.max(sunDir.y, 0.06) * 400, p.z + sunDir.z * 400);
+      sun.position.set(p.x + sunDir.x * 400, p.y + Math.max(sunDir.y, 0.06) * 400, p.z + sunDir.z * 400);
       sun.target.position.copy(p);
       // The 3 nearest real lamp lights follow the car; everything else is emissive fake.
       lamps.nearest(p, 3).forEach((lp, i) => {
-        carLights[i].position.set(lp[0], 7.5, -lp[1]);
+        carLights[i].position.set(lp[0], surfaceHeight(lp[0], -lp[1]) + 7.5, -lp[1]);
         carLights[i].intensity = night * 40;
       });
     }
@@ -602,7 +596,7 @@ export function createScene(world) {
   /** Map coordinates, or null to hide it. The coordinate law: three.z is -map.y. */
   function setBeacon(p) {
     beacon.visible = !!p;
-    if (p) beacon.position.set(p.x, 45, -p.y);
+    if (p) beacon.position.set(p.x, groundHeight(p.x, -p.y) + 45, -p.y);
   }
 
   return {scene, camera, renderer, render, update, follow, resize, makeCar, makeDog, makePigeonFleet, toV3, setBeacon, setSignalPhase: signals.setPhase};
@@ -960,6 +954,8 @@ function buildRoads(world) {
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  // World-space asphalt UVs agree wherever road ribbons overlap at a junction.
+  for (let i = 0; i < pos.length / 3; i++) { uv[i * 2] = pos[i * 3] / 4; uv[i * 2 + 1] = -pos[i * 3 + 2] / 4; }
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
@@ -1069,14 +1065,14 @@ function buildPontRouge(world) {
         // side girder: a long thin box per segment per side
         const gx = (x1 + x2) / 2 + nx * half * s, gy = (y1 + y2) / 2 + ny * half * s;
         const beam = new THREE.Mesh(new THREE.BoxGeometry(len, 2.6, 0.5), red);
-        beam.position.set(gx, 1.3, -gy);
-        beam.rotation.y = Math.atan2(dy, dx);
+        beam.position.set(gx, (e.deckHeights[i] + e.deckHeights[i + 1]) / 2 + 1.3, -gy);
+        beam.rotation.set(0, Math.atan2(dy, dx), Math.atan2(e.deckHeights[i + 1] - e.deckHeights[i], len), 'YXZ');
         girder.push(beam);
         // posts every ~10m
         for (let d = 5; d < len; d += 10) {
           const px = x1 + dx / len * d + nx * half * s, py = y1 + dy / len * d + ny * half * s;
           const post = new THREE.Mesh(new THREE.BoxGeometry(0.4, 4.2, 0.4), red);
-          post.position.set(px, 2.1, -py);
+          post.position.set(px, e.deckHeights[i] + (e.deckHeights[i + 1] - e.deckHeights[i]) * d / len + 2.1, -py);
           posts.push(post);
         }
       }
@@ -1105,6 +1101,7 @@ function buildBuildings(world) {
     // sloped footprints; the centroid keeps the visible face at street level. Top is floor + height.
     const base = seatGroundUnder(pts) - 0.3;
     const top = base + h;
+    const foundation = Math.min(base, minGroundUnder(pts) - 0.5);
     // walls
     for (let i = 0; i < n - 1; i++) {
       const [x1, y1] = pts[i], [x2, y2] = pts[i + 1];
@@ -1114,7 +1111,7 @@ function buildBuildings(world) {
       // their parent building, and two coplanar facades with different window seeds z-fight
       // into a dithered static patch. The nudge is invisible and breaks every such tie.
       const ox = nx * (0.015 + seed * 0.025), oy = -nz * (0.015 + seed * 0.025);
-      pos.push(x1 + ox, base, -(y1 + oy), x2 + ox, base, -(y2 + oy), x1 + ox, top, -(y1 + oy), x2 + ox, top, -(y2 + oy));
+      pos.push(x1 + ox, foundation, -(y1 + oy), x2 + ox, foundation, -(y2 + oy), x1 + ox, top, -(y1 + oy), x2 + ox, top, -(y2 + oy));
       for (let k = 0; k < 4; k++) { norm.push(nx, 0, nz); rnd.push(seed); bas.push(base); }
       idx.push(v, v + 2, v + 1, v + 1, v + 2, v + 3);
       v += 4;
@@ -1273,7 +1270,7 @@ function buildPolys(polys, color, y) {
   const g = new THREE.ShapeGeometry(shapes);
   g.rotateX(-Math.PI / 2); // ShapeGeometry XY -> ground XZ; model +Y becomes -Z, matching toV3
   const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({color}));
-  m.position.y = y;
+  drapeGeometry(g, y);
   m.receiveShadow = true;
   return m;
 }
@@ -2022,10 +2019,10 @@ function buildLamps(lamps) {
   const pole = new THREE.CylinderGeometry(0.07, 0.1, 7.5, 5); pole.translate(0, 3.75, 0);
   const inst = new THREE.InstancedMesh(pole, new THREE.MeshLambertMaterial({color: 0x2b2f36}), lamps.length);
   const m = new THREE.Matrix4();
-  lamps.forEach((p, i) => { m.makeTranslation(p[0], groundHeight(p[0], -p[1]), -p[1]); inst.setMatrixAt(i, m); });
+  lamps.forEach((p, i) => { m.makeTranslation(p[0], surfaceHeight(p[0], -p[1]), -p[1]); inst.setMatrixAt(i, m); });
 
   const pos = new Float32Array(lamps.length * 3);
-  lamps.forEach((p, i) => { pos[i * 3] = p[0]; pos[i * 3 + 1] = groundHeight(p[0], -p[1]) + 7.6; pos[i * 3 + 2] = -p[1]; });
+  lamps.forEach((p, i) => { pos[i * 3] = p[0]; pos[i * 3 + 1] = surfaceHeight(p[0], -p[1]) + 7.6; pos[i * 3 + 2] = -p[1]; });
   const pg = new THREE.BufferGeometry();
   pg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   // Round soft sprites via shader — PointsMaterial without a map draws SQUARES, which at
@@ -2068,7 +2065,7 @@ function buildLamps(lamps) {
   // Pool sits a bit higher above the tarmac now that roads DRAPE terrain: a flat horizontal disc on
   // a sloped road z-fights/hides at 6cm; 0.25m clears the incline and, being additively blended, still
   // reads as a warm glow pooled on the road rather than a floating disc.
-  lamps.forEach((p, i) => { m.makeTranslation(p[0], groundHeight(p[0], -p[1]) + 0.25, -p[1]); pools.setMatrixAt(i, m); });
+  lamps.forEach((p, i) => { m.makeTranslation(p[0], surfaceHeight(p[0], -p[1]) + 0.25, -p[1]); pools.setMatrixAt(i, m); });
 
   // Lamps that have been knocked down. Only three of these columns ever carry a real PointLight, and
   // the three are chosen by proximity to the car — so a flattened lamp is exactly the one the player
@@ -2090,7 +2087,7 @@ function buildLamps(lamps) {
   const props = lamps.map((p, i) => ({
     x: p[0], y: p[1], kind: 'lamp',
     ref: {topple: [inst], hide: [pools], glow: {attr: pg.attributes.position, i},
-          i, x: p[0], y: groundHeight(p[0], -p[1]), z: -p[1], rotY: 0, scale: 1},
+          i, x: p[0], y: surfaceHeight(p[0], -p[1]), z: -p[1], rotY: 0, scale: 1},
   }));
   return {poles: inst, glows, pools, nearest, props, downed};
 }
@@ -2160,7 +2157,7 @@ function buildParcels(world) {
       const vStart = v;
       const c = TERRAIN.none;
       for (const q of contour) {
-        pos.push(q.x, PARCEL_Y, -q.y);
+        pos.push(q.x, groundHeight(q.x, -q.y) + PARCEL_Y, -q.y);
         col.push(c[0], c[1], c[2], c[3]);
         v++;
       }

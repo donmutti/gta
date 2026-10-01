@@ -73,6 +73,23 @@ export function createAudio() {
     sirenGain.connect(master)
     sirenOsc.start()
 
+    // A two-tone electric horn, held by H and softly released to avoid clicks.
+    const hornGain = ctx.createGain()
+    hornGain.gain.value = 0
+    const hornFilter = ctx.createBiquadFilter()
+    hornFilter.type = 'lowpass'
+    hornFilter.frequency.value = 1600
+    hornFilter.connect(hornGain)
+    hornGain.connect(master)
+    for (const frequency of [400, 500]) {
+      const tone = ctx.createOscillator()
+      tone.type = 'sawtooth'
+      tone.frequency.value = frequency
+      tone.connect(hornFilter)
+      tone.start()
+    }
+    nodes.hornGain = hornGain
+
     // --- impacts: a one-shot noise burst through a lowpass, pitched by how hard you hit. Built
     // from the same noise buffer, so a crash costs one BufferSource and nothing is preloaded.
     nodes.thud = (force) => {
@@ -120,14 +137,16 @@ export function createAudio() {
     silence() {
       if (!started || ctx.state !== 'running') return
       const now = ctx.currentTime
+      nodes.hornGain.gain.setTargetAtTime(0, now, 0.04)
       nodes.engineGain.gain.setTargetAtTime(0, now, 0.08)
       nodes.tyreGain.gain.setTargetAtTime(0, now, 0.05)
       nodes.sirenGain.gain.setTargetAtTime(0, now, 0.08)
     },
 
-    update(dt, car, police) {
+    update(dt, car, police, horn = false) {
       if (!started || ctx.state !== 'running') return
       const now = ctx.currentTime
+      nodes.hornGain.gain.setTargetAtTime(horn ? 0.22 : 0, now, horn ? 0.015 : 0.04)
       const speed = Math.abs(car.speed)
 
       // One thud per fresh contact, and at most a few a second while scraping along something.

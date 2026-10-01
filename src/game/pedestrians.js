@@ -1,3 +1,5 @@
+import {groundHeight, surfaceHeight} from '../world/terrain.js'
+const pedestrianHeight = ped => ped.edge.bridge ? surfaceHeight(ped.x, -ped.y) : groundHeight(ped.x, -ped.y)
 // The people.
 //
 // One InstancedMesh per BODY PART, each at full crowd count — sixteen draw calls for however many
@@ -1017,10 +1019,10 @@ export function createPedestrians(world, scene, signals) {
     for (let i = 0; i < peds.length; i++) {
       const ped = peds[i], k = ped.build.scale
       if (ped.rag) {
-        rootFromColumns(F.root, ped.rag.col, ped.x, groundAt(ped.x, ped.y) + ped.rag.y, -ped.y)
+        rootFromColumns(F.root, ped.rag.col, ped.x, (ped.elevation = pedestrianHeight(ped)) + ped.rag.y, -ped.y)
         drawFigure(i, ped, ped.rag.pose)
       } else {
-        rootFrame(F.root, ped.x, groundAt(ped.x, ped.y) + hipHeight(ped.pose, k), -ped.y,
+        rootFrame(F.root, ped.x, (ped.elevation = pedestrianHeight(ped)) + hipHeight(ped.pose, k), -ped.y,
           ped.heading + Math.PI / 2 + 0.12 * Math.sin(ped.phase),
           ped.lean + 0.12 * Math.max(0, ped.gait - 1), 0.022 * Math.cos(ped.phase))
         drawFigure(i, ped, ped.pose)
@@ -1044,7 +1046,7 @@ export function createPedestrians(world, scene, signals) {
           const ped = peds[i]
           if (ped.down > 0) continue
           let dx = 0, dy = 0
-          const elevation = groundAt(ped.x, ped.y)
+          const elevation = pedestrianHeight(ped)
           for (const vehicle of vehicles) {
             if (Math.abs(elevation - vehicle.elevation) > 2.5) continue
             const reach = broadRadius(vehicle.box, SHOULDER)
@@ -1055,6 +1057,7 @@ export function createPedestrians(world, scene, signals) {
             ped.x += sx; ped.y += sy; dx += sx; dy += sy
           }
           eachNear(ped, SHOULDER * 2, other => {
+            if (Math.abs(elevation - pedestrianHeight(other)) > 2.5) return
             const rx = ped.x - other.x, ry = ped.y - other.y
             const distance = Math.hypot(rx, ry)
             if (distance >= SHOULDER * 2 || other.down > 0) return
@@ -1081,7 +1084,7 @@ export function createPedestrians(world, scene, signals) {
      * `reach` is how far it needs to see to stop. Anybody inside that rectangle is somebody the
      * driver would brake for. Same buckets as `strike`, so the cost is a handful of cells.
      */
-    pathAhead(x, y, heading, halfW, reach) {
+    pathAhead(x, y, heading, halfW, reach, elevation = groundAt(x, y)) {
       const fx = Math.cos(heading), fy = Math.sin(heading)
       let best = 0
       const c0 = Math.floor((x - reach) / HIT_CELL), c1 = Math.floor((x + reach) / HIT_CELL)
@@ -1091,6 +1094,7 @@ export function createPedestrians(world, scene, signals) {
           const bucket = hitGrid.get(cellKey(cx, cy))
           if (!bucket) continue
           for (const ped of bucket) {
+            if (Math.abs(pedestrianHeight(ped) - elevation) > 2.5) continue
             const dx = ped.x - x, dy = ped.y - y
             const along = dx * fx + dy * fy
             if (along <= 0 || along > reach) continue
@@ -1110,7 +1114,7 @@ export function createPedestrians(world, scene, signals) {
      * are scenery. The box is the vehicle's OWN measured footprint, so a bus knocks people over
      * along ten metres of flank and a sedan does not.
      */
-    strike(x, y, heading, vx, vy, speed, box) {
+    strike(x, y, heading, vx, vy, speed, box, elevation = groundAt(x, y)) {
       if (Math.abs(speed) < 2) return 0
       const reach = broadRadius(box, SHOULDER)
       const fx = Math.cos(heading), fy = Math.sin(heading)
@@ -1123,6 +1127,8 @@ export function createPedestrians(world, scene, signals) {
           if (!bucket) continue
           for (const ped of bucket) {
             if (ped.down > 0) continue
+            const height = pedestrianHeight(ped)
+            if (Math.abs(height - elevation) > 2.5) continue
             if (!inBox(ped.x, ped.y, x, y, fx, fy, box, SHOULDER)) continue
             ped.down = 2.2
             const away = Math.atan2(ped.y - y, ped.x - x)
@@ -1233,7 +1239,7 @@ export function createPedestrians(world, scene, signals) {
         const pvx = Math.cos(ped.heading) * walkSpeed + ped.fvx
         const pvy = Math.sin(ped.heading) * walkSpeed + ped.fvy
         let threat = null
-        const elevation = groundAt(ped.x, ped.y)
+        const elevation = pedestrianHeight(ped)
         for (const vehicle of vehicles) {
           if (Math.abs(elevation - vehicle.elevation) > 2.5) continue
           const next = vehicleThreat(ped.x + ped.fox, ped.y + ped.foy, pvx, pvy, vehicle)

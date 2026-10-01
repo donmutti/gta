@@ -53,17 +53,19 @@ three.x = map.x     three.z = -map.y     (north points into -Z; the map reads li
 ```
 So a map point `[mx, my]` is placed at world `(mx, y, -my)`, and terrain is sampled as `groundHeight(mx, -(-my)) = groundHeight(worldX, worldZ)`. Get this wrong and everything mirrors or floats.
 
-### Terrain — BUILT, THEN SWITCHED OFF (the world is flat today)
-`TERRAIN_ENABLED = false` at the top of `src/world/terrain.js` is the master switch, and it is off. With the car still driving on a flat plane, a terraned world put traffic above and below the roads and made the city hard to simply look at, so the whole thing is disabled in one place: `setHeightfield` refuses to install the grid, every helper returns its flat value, and all the seating maths below stays in the code resolving to zero. Objects keep their elevation reasoning; the flat world just disregards it. To revive the hills: flip the flag, then finish the car work (read `groundHeight` for the car's Y, `groundNormal` for its tilt). The rest of this section describes how the terrain works when it is on.
+### Terrain and bridge levels
 
+The world uses ACT's CC0 2024 bare-earth LiDAR, baked to an 8 m grid by `tools/bake-terrain.py`. `groundHeight(x,z)` returns the earth, while `surfaceHeight(x,z,previousElevation)` also considers named bridge decks. Passing the previous elevation preserves the level of a vehicle beneath an overpass. `configureTerrain(world)` installs bridge profiles and grades the relocated airport onto its flat platform before scene construction.
 
-The world was flat (y=0) until the final hours, then a DEM was baked (`tools/fetch-terrain.mjs` → `public/data/heightfield.json`, ~73m of gorge relief) and every STATIC thing was seated on it via `groundHeight`. Buildings seat at their footprint **centroid** ground minus a small bury (seating at the lowest corner sank sloped storefronts below the street). Roads/sidewalks/markings/paths drape per-vertex. Lamp light-pools sit 0.25m up so they clear sloped roads. The airport is lifted to ONE flat anchor height (a runway must stay flat). Bridges are deliberately NOT draped — they span valleys. **Open S3 item when mothballed:** the CAR still drives on the flat plane — it needs to read `groundHeight` for its Y and tilt to `groundNormal` on slopes (physics half, `src/game/` + `main.js`).
+The renderer and sampler use the same grid triangles. `src/render/terrain-mesh.js` clips roads, sidewalks, parks and green polygons onto those triangles; interpolating only a road's original endpoints lets the earth cut through its middle. Buildings keep their centroid floor elevation and extend foundations to the lowest sampled perimeter. Traffic, police and the player publish elevation and slope; collision and pedestrian avoidance reject bodies on another vertical level. River polylines render as narrow ribbons along the bed, never as filled polygons at height zero.
+
+Keep grass below asphalt: equal heights cause Z-fighting. Asphalt uses world-space UVs so overlapping road ribbons have identical texture coordinates. The relocated airport is an intentional gameplay modification, not the real Findel elevation at its geographical location.
 
 ## Data pipeline
 
 All game data is committed under `public/data/` — the game never touches the network at play time. Regenerate with the fetch tools (they hit public APIs, be polite):
 - `tools/fetch-city.mjs` — Overpass → `city.json` (roads, buildings, trees, lamps, water, green, signals, crossings, cafes, postboxes, monuments, steps, fountains, squares).
-- `tools/fetch-terrain.mjs` — opentopodata SRTM → `heightfield.json` (elevation grid, zeroed at the slice centre).
+- `tools/fetch-terrain.mjs` / `tools/bake-terrain.py` — ACT 2024 LiDAR MNT → `heightfield.json` (8 m grid, zeroed at the slice centre).
 - `tools/fetch-findel.mjs` — Overpass → `findel.json` (real Findel airport geometry, re-anchored just east of the city so it's a short drive).
 
 ## Verifying a change

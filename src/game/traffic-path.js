@@ -28,7 +28,7 @@ export function samplePath(path, distance) {
 export function createLanePath(edge, dir, lane, radius = 7) {
   const raw = dir > 0 ? edge.pts : [...edge.pts].reverse()
   const centres = raw.filter((p, i) => !i || Math.hypot(p[0] - raw[i - 1][0], p[1] - raw[i - 1][1]) > 0.001)
-  const offset = edge.width * 0.25 * (edge.oneway ? lane : 1)
+  const offset = edge.oneway && edge.width < 6 ? 0 : edge.width * 0.25 * (edge.oneway ? lane : 1)
   const unit = (a, b) => {
     const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1
     return [(b[0] - a[0]) / length, (b[1] - a[1]) / length]

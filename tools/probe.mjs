@@ -116,13 +116,14 @@ try {
   await new Promise(r => setTimeout(r, WAIT));
 
   const out = await rpc(ws, id++, 'Runtime.evaluate', {
-    expression: EXPR, returnByValue: true, awaitPromise: true,
+    expression: EXPR, returnByValue: true, awaitPromise: true, userGesture: true,
   });
   if (out.exceptionDetails) {
     console.error(out.exceptionDetails.exception?.description ?? JSON.stringify(out.exceptionDetails));
     process.exit(1);
   }
   if (SCREENSHOT) {
+    await rpc(ws, id++, 'Emulation.setVirtualTimePolicy', {policy: 'pause'});
     const shot = await rpc(ws, id++, 'Page.captureScreenshot', {format: 'png'});
     writeFileSync(SCREENSHOT, Buffer.from(shot.data, 'base64'));
   }

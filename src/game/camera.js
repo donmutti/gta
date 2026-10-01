@@ -110,14 +110,14 @@ export function updateChase(chase, car, camera, dt, world = null) {
   }
   // Height is measured from the ground under the camera, not from sea level, so cresting a hill
   // lifts the camera with the car instead of burying it in the slope.
-  camera.position.set(cx, ch + groundAt(chase.x, chase.y), cz)
+  camera.position.set(cx, Math.max((car.elevation ?? groundAt(car.x, car.y)) + ch, groundAt(chase.x, chase.y, car.elevation) + 1.5), cz)
 
   // Look a little ahead of the car rather than at it: centring the car puts half the screen behind
   // you, and the thing the player is steering towards belongs in the middle of the frame.
   const lookX = car.x + Math.cos(car.heading) * LOOK_AHEAD
   const lookY = car.y + Math.sin(car.heading) * LOOK_AHEAD
   const [lx, lz] = toThree(lookX, lookY)
-  camera.lookAt(lx, 1.2 + groundAt(lookX, lookY), lz)
+  camera.lookAt(lx, 1.2 + (car.elevation ?? groundAt(car.x, car.y)), lz)
 }
 
 /** Snap without smoothing — after a respawn, where easing in from the old position looks like a bug. */

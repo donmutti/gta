@@ -1,3 +1,4 @@
+import {drapeGeometry} from './terrain-mesh.js';
 // Park interiors — the layer that turns a flat green polygon into a laid-out public park.
 // scene.js draws the grass fill (buildPolys(world.green)) and the wild trees; decor.js rings each
 // park EDGE with hedge-domes and fountains. This file owns only the INTERIOR: the WALKWAY NETWORK
@@ -1708,6 +1709,7 @@ function buildGroundLayer(quads, discs, rects, polys = []) {
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   g.setIndex(idx);
+  drapeGeometry(g);
   const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({vertexColors: true, side: THREE.DoubleSide}));
   mesh.receiveShadow = true;
   return mesh;
