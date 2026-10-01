@@ -17,7 +17,7 @@ const MAX_STEER = 0.62          // radians at full lock, standing still
 const STEER_RATE = 5.0          // how fast the wheel reaches the commanded angle
 const ENGINE = 11.0             // m/s^2 at full throttle
 const BRAKE = 20.0              // m/s^2 on the brake
-const REVERSE = 5.0             // m/s^2 backwards — deliberately feeble
+const REVERSE = 9.0             // enough torque to reverse uphill away from a wall
 const DRAG = 0.0080             // quadratic, dominates at the top end
 const ROLL = 0.9                // linear, brings you to rest
 const GRIP = 13.0                // lateral acceleration the tyres can hold, m/s^2
@@ -268,7 +268,7 @@ export function stepCar(car, input, dt, world, scratch = []) {
 
   let accel = 0
   if (input.throttle > 0) accel = ENGINE * input.throttle
-  else if (input.throttle < 0) accel = forward > 0.5 ? -BRAKE : REVERSE * input.throttle
+  else if (input.throttle < 0) accel = forward > 0.5 ? -BRAKE : REVERSE * input.throttle * Math.max(0, 1 - Math.max(0, -forward - 6) / 3)
   const speedAbs = Math.abs(forward)
   accel -= Math.sign(forward) * (DRAG * speedAbs * speedAbs + ROLL)
   // Off-road drag RAMPS IN WITH SPEED instead of being a flat force. Applied as a constant it was

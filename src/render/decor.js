@@ -2,7 +2,7 @@
 // REAL positions (OSM cafes, post boxes, monuments, steps); only the road-works sites are
 // invented, and those deterministically. Nothing simulates: props, not actors.
 import * as THREE from 'three';
-import {groundHeight} from '../world/terrain.js';
+import {groundHeight, seatGroundUnder} from '../world/terrain.js';
 import {shoveClear} from './clearance.js';
 
 // Every prop is placed at a map point (x, mapY); its world Y is the TERRAIN height there plus its
@@ -14,6 +14,27 @@ const hashAngle = (i) => (Math.sin(i * 78.233) * 43758.5453 % 1 + 1) % 1 * Math.
 
 export function buildDecorations(world) {
   const group = new THREE.Group();
+
+  // User-selected orange storefront on Rue Jean Origer, anchored to its facade.
+  const mabuhayBuilding = world.buildings.find(b => b.pts.some(p => Math.hypot(p[0]-129.507,p[1]+1028.821)<.1));
+  if (mabuhayBuilding) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024; canvas.height = 192;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#21110b'; ctx.fillRect(0,0,1024,192);
+    ctx.strokeStyle = '#e7a451'; ctx.lineWidth = 8; ctx.strokeRect(8,8,1008,176);
+    ctx.font = 'bold 116px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffd38b'; ctx.fillText('MABUHAY',512,101);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.3,.62),new THREE.MeshBasicMaterial({map:texture,toneMapped:false}));
+    sign.name = 'mabuhay-sign';
+    // Wall points run west/north; its street-facing normal points south/west.
+    sign.rotation.y = Math.atan2(-.178, .984);
+    sign.position.set(123.386,seatGroundUnder(mabuhayBuilding.pts)+3.12,1027.80);
+    group.add(sign);
+  }
+
 
   // --- cafe verandas: parasol + table at every cafe, colour hashed per cafe ----------------
   if (world.cafes?.length) {

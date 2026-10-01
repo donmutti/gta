@@ -1477,9 +1477,10 @@ function buildGreenWall(bounds) {
   let v = 0;
   for (let i = 0; i < ring.length - 1; i++) {
     const [ax, ay] = ring[i], [bx, by] = ring[i + 1];
-    const topA = H + 2.4 * pseudo(ax * 0.3 + ay * 0.2);   // jittered crest so it reads as a hedge, not a fence
-    const topB = H + 2.4 * pseudo(bx * 0.3 + by * 0.2);
-    pos.push(ax, 0, -ay,  bx, 0, -by,  ax, topA, -ay,  bx, topB, -by);   // world Z = -y
+    const baseA = groundHeight(ax, -ay), baseB = groundHeight(bx, -by);
+    const topA = baseA + H + 2.4 * pseudo(ax * 0.3 + ay * 0.2);   // jittered crest so it reads as a hedge, not a fence
+    const topB = baseB + H + 2.4 * pseudo(bx * 0.3 + by * 0.2);
+    pos.push(ax, baseA - 2, -ay,  bx, baseB - 2, -by,  ax, topA, -ay,  bx, topB, -by);   // world Z = -y
     idx.push(v, v + 1, v + 2,  v + 1, v + 3, v + 2);
     v += 4;
   }
@@ -1489,6 +1490,7 @@ function buildGreenWall(bounds) {
   g.computeVertexNormals();
   const mat = new THREE.MeshLambertMaterial({color: 0x2f5233, side: THREE.DoubleSide});
   const wall = new THREE.Mesh(g, mat);
+  wall.name = 'boundary-forest';
   wall.castShadow = false;
   return wall;
 }
