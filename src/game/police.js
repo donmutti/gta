@@ -4,8 +4,8 @@
 // head, and the police want a word. Nobody is armed and nobody dies. The tension comes from being
 // chased through streets you recognise, which is enough.
 
-import {createCar, stepCar, CAR_RADIUS} from './car.js'
-import {VEHICLE_BOX, broadRadius, inBox, SHOULDER} from './vehicles.js'
+import {createCar, stepCar} from './car.js'
+import {VEHICLE_BOX, broadRadius, inBox, SHOULDER, boxContact} from './vehicles.js'
 import {groundAt} from '../world/ground.js'
 import {orientToGround} from './carvisual.js'
 
@@ -138,6 +138,7 @@ export function createPolice(world, scene, makeCar, signals) {
     // switching on either: the renderer only drives the lights of the car it is following.
     const mesh = makeCar(0x2b4f9e, {police: true})
     scene.add(mesh)
+    orientToGround(mesh, x, y, heading, groundAt(x, y))
     cops.push({
       car, mesh, repathIn: 0, target: null,
       bar: mesh.userData.lightbar ?? null,
@@ -431,52 +432,38 @@ export function createPolice(world, scene, makeCar, signals) {
         }
         if (cop.target) driveToward(cop, cop.target.x, cop.target.y, dt)
 
-        // Cop against player. stepCar only resolves buildings and street furniture, so without
-        // this a pursuing car drives straight THROUGH you — the one collision a player is
-        // guaranteed to be staring at. Both cars are pushed, and the heavier blow lands on
-        // whoever was doing the closing.
-        const dx = cop.car.x - player.x, dy = cop.car.y - player.y
-        const min = CAR_RADIUS * 2
-        const d2 = dx * dx + dy * dy
-        if (d2 < min * min) {
-          const d = Math.sqrt(d2) || 0.0001
-          const nx = dx / d, ny = dy / d
-          const overlap = min - d
-          // Separate CONTINUOUSLY, never in one step. Resolving the whole overlap in a single frame
-          // teleported both cars metres apart on a hard hit — the impulse below is what a collision
-          // is; this is only here to stop two bodies slowly sinking into each other. A few
-          // centimetres of slop keeps resting contact from jittering, a fifth of the remainder is
-          // taken per frame, and the per-frame step is capped so nothing can ever visibly jump.
-          const SLOP = 0.05, BIAS = 0.2, MAX_STEP = 0.12
-          const corr = Math.min(MAX_STEP, Math.max(0, overlap - SLOP) * BIAS)
-          if (corr > 0) {
-            cop.car.x += nx * corr * 0.5
-            cop.car.y += ny * corr * 0.5
-            player.x -= nx * corr * 0.5
-            player.y -= ny * corr * 0.5
-          }
-
-          // Exchange the closing speed along the contact normal.
-          const rel = (cop.car.vx - player.vx) * nx + (cop.car.vy - player.vy) * ny
-          if (rel < 0) {
-            const j = rel * 0.85
-            cop.car.vx -= nx * j
-            cop.car.vy -= ny * j
-            player.vx += nx * j
-            player.vy += ny * j
-            player.contact = true
-          }
-        }
-
         // Cops shove traffic aside exactly as the player does, so a pursuit through busy streets
         // scatters cars instead of passing through them.
         if (traffic) {
-          traffic.collideWith(cop.car)
           traffic.yieldToSiren(cop.car.x, cop.car.y)
         }
 
-        orientToGround(cop.mesh, cop.car.x, cop.car.y, cop.car.heading, groundAt(cop.car.x, cop.car.y))
       }
+    },
+    resolveContacts(player, traffic) {
+      const separate = (a, b) => {
+        const hit = boxContact(a.x, a.y, a.heading, HERO_BOX, b.x, b.y, b.heading, HERO_BOX)
+        if (!hit) return
+        const push = (hit.depth + 0.001) / 2
+        a.x += hit.nx * push; a.y += hit.ny * push
+        b.x -= hit.nx * push; b.y -= hit.ny * push
+        const closing = (a.vx - b.vx) * hit.nx + (a.vy - b.vy) * hit.ny
+        if (closing < 0) {
+          const impulse = closing * 0.55
+          a.vx -= hit.nx * impulse; a.vy -= hit.ny * impulse
+          b.vx += hit.nx * impulse; b.vy += hit.ny * impulse
+          a.contact = b.contact = true
+        }
+      }
+      for (let pass = 0; pass < 3; pass++) {
+        for (let i = 0; i < cops.length; i++) {
+          const cop = cops[i]
+          separate(cop.car, player)
+          for (let j = i + 1; j < cops.length; j++) separate(cop.car, cops[j].car)
+          traffic?.collideWith(cop.car)
+        }
+      }
+      for (const cop of cops) orientToGround(cop.mesh, cop.car.x, cop.car.y, cop.car.heading, groundAt(cop.car.x, cop.car.y))
     },
   }
 }

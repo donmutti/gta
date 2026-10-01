@@ -23,7 +23,7 @@
 // of that, and the saving is what pays for the extra parts.
 
 import * as THREE from 'three'
-import {broadRadius, inBox, SHOULDER} from './vehicles.js'
+import {broadRadius, inBox, SHOULDER, personContact, vehicleThreat} from './vehicles.js'
 import {groundAt} from '../world/ground.js'
 import {createPose, strikeRagdoll, stepRagdoll, ragdollDuration} from './ragdoll.js'
 
@@ -86,8 +86,6 @@ const RESPAWN_MAX = 160
 const BEHIND_DOT = -0.25        // and "behind" means properly behind, not just off to the side
 const RESPAWN_TRIES = 6         // give up rather than force it: see the comment at the call site
 /** A car closer than this, coming fast, sends people running for the kerb. */
-const SCARE_RANGE = 15
-const SCARE_SPEED = 7          // m/s below which a car is just traffic, not a threat
 const FLEE_TIME = 1.8
 /** Seconds to walk from one kerb to the other. */
 const CROSS_SECONDS = 2.6
@@ -516,7 +514,7 @@ export function createPedestrians(world, scene, signals) {
   function avoid(ped, dt) {
     let px = 0, py = 0, slow = 1
     const wx = Math.cos(ped.heading), wy = Math.sin(ped.heading)
-    const speed = ped.pace * ped.gait
+    const speed = ped.idle > 0 || ped.waiting ? 0 : ped.pace * ped.gait
     const vx = wx * speed, vy = wy * speed
     eachNear(ped, LOOKOUT, (other) => {
       const rx = other.x - ped.x, ry = other.y - ped.y
@@ -533,7 +531,7 @@ export function createPedestrians(world, scene, signals) {
 
       // --- the prediction. Somebody standing still still counts: their velocity is simply zero,
       // and walking into a stationary person is the commonest collision on a pavement.
-      const os = other.pace * (other.gait ?? 1)
+      const os = other.idle > 0 || other.waiting ? 0 : other.pace * (other.gait ?? 1)
       const dvx = Math.cos(other.heading) * os - vx
       const dvy = Math.sin(other.heading) * os - vy
       const vv = dvx * dvx + dvy * dvy
@@ -1015,8 +1013,64 @@ export function createPedestrians(world, scene, signals) {
     }
   }
 
+  function render(eye) {
+    for (let i = 0; i < peds.length; i++) {
+      const ped = peds[i], k = ped.build.scale
+      if (ped.rag) {
+        rootFromColumns(F.root, ped.rag.col, ped.x, groundAt(ped.x, ped.y) + ped.rag.y, -ped.y)
+        drawFigure(i, ped, ped.rag.pose)
+      } else {
+        rootFrame(F.root, ped.x, groundAt(ped.x, ped.y) + hipHeight(ped.pose, k), -ped.y,
+          ped.heading + Math.PI / 2 + 0.12 * Math.sin(ped.phase),
+          ped.lean + 0.12 * Math.max(0, ped.gait - 1), 0.022 * Math.cos(ped.phase))
+        drawFigure(i, ped, ped.pose)
+      }
+      if (eye && (ped.x - eye.x) ** 2 + (ped.y - eye.y) ** 2 < LENS_RADIUS ** 2) {
+        for (const m of parts) hide(m, i)
+      }
+    }
+    for (const m of parts) m.instanceMatrix.needsUpdate = true
+  }
+
   return {
     peds,
+    render,
+    resolveContacts(vehicles) {
+      // Resolve after every vehicle has moved, before matrices are drawn. Low-speed or parked
+      // cars remain solid; the high-speed impact paths still produce their normal ragdolls.
+      for (let pass = 0; pass < 3; pass++) {
+        rebuildHitGrid()
+        for (let i = 0; i < peds.length; i++) {
+          const ped = peds[i]
+          if (ped.down > 0) continue
+          let dx = 0, dy = 0
+          const elevation = groundAt(ped.x, ped.y)
+          for (const vehicle of vehicles) {
+            if (Math.abs(elevation - vehicle.elevation) > 2.5) continue
+            const reach = broadRadius(vehicle.box, SHOULDER)
+            if ((ped.x - vehicle.x) ** 2 + (ped.y - vehicle.y) ** 2 > reach * reach) continue
+            const hit = personContact(ped.x, ped.y, vehicle.x, vehicle.y, vehicle.heading, vehicle.box)
+            if (!hit) continue
+            const sx = hit.nx * (hit.depth + 0.001), sy = hit.ny * (hit.depth + 0.001)
+            ped.x += sx; ped.y += sy; dx += sx; dy += sy
+          }
+          eachNear(ped, SHOULDER * 2, other => {
+            const rx = ped.x - other.x, ry = ped.y - other.y
+            const distance = Math.hypot(rx, ry)
+            if (distance >= SHOULDER * 2 || other.down > 0) return
+            const nx = distance > 1e-6 ? rx / distance : (i % 2 ? 1 : -1)
+            const ny = distance > 1e-6 ? ry / distance : 0
+            const amount = (SHOULDER * 2 - distance + 0.001) / 2
+            ped.x += nx * amount; ped.y += ny * amount
+            dx += nx * amount; dy += ny * amount
+            other.x -= nx * amount; other.y -= ny * amount
+            other.fox -= nx * amount; other.foy -= ny * amount
+          })
+          ped.fox += dx; ped.foy += dy
+        }
+      }
+      rebuildHitGrid()
+    },
     /** Debug lever: hide every instanced body part at once. */
     setVisible(v) { for (const m of crowdParts) m.visible = v },
 
@@ -1090,7 +1144,7 @@ export function createPedestrians(world, scene, signals) {
      * scaled to nothing rather than skipped, because an InstancedMesh has no per-instance
      * visibility and a stale matrix would leave them frozen where they were.
      */
-    update(dt, car, clock = 0, eye = null) {
+    update(dt, car, clock = 0, eye = null, vehicles = []) {
       for (let i = 0; i < peds.length; i++) {
         const ped = peds[i]
         const k = ped.build.scale
@@ -1152,8 +1206,6 @@ export function createPedestrians(world, scene, signals) {
             ped.flipX = 0; ped.flipY = 0
             ped.idle = 0.8 + rand() * 1.5     // a moment to gather themselves before walking on
           } else {
-            rootFromColumns(F.root, rag.col, rag.x, groundAt(ped.x, ped.y) + rag.y, rag.z)
-            drawFigure(i, ped, rag.pose)
             continue
           }
         }
@@ -1177,23 +1229,21 @@ export function createPedestrians(world, scene, signals) {
         // Scatter. A car bearing down at speed sends people away from it and, crucially, AWAY FROM
         // THE ROAD — running directly away would keep them in front of the bumper. The push is
         // perpendicular to the car's travel, which is what sends them onto the kerb.
-        const cdx = ped.x - car.x, cdy = ped.y - car.y
-        const near2 = cdx * cdx + cdy * cdy
-        if (Math.abs(car.speed) > SCARE_SPEED && near2 < SCARE_RANGE * SCARE_RANGE) {
-          // cdx/cdy point FROM the car TO the person, so the dot product with the car velocity is
-          // positive exactly when it is bearing down on them. Negating it, as I first did, made the
-          // test true only when driving AWAY — the scatter could never fire.
-          const closing = car.vx * cdx + car.vy * cdy
-          if (closing > 0) {
-            const side = (car.vx * cdy - car.vy * cdx) > 0 ? 1 : -1
-            const cs = Math.hypot(car.vx, car.vy) || 1
-            // Perpendicular to the car's heading, on whichever side they already are.
-            const px = (-car.vy / cs) * side, py = (car.vx / cs) * side
-            const urgency = 1 - Math.sqrt(near2) / SCARE_RANGE
-            ped.fvx += px * urgency * 26 * dt
-            ped.fvy += py * urgency * 26 * dt
-            ped.flee = FLEE_TIME
-          }
+        const walkSpeed = ped.idle > 0 || ped.waiting ? 0 : ped.pace * ped.gait
+        const pvx = Math.cos(ped.heading) * walkSpeed + ped.fvx
+        const pvy = Math.sin(ped.heading) * walkSpeed + ped.fvy
+        let threat = null
+        const elevation = groundAt(ped.x, ped.y)
+        for (const vehicle of vehicles) {
+          if (Math.abs(elevation - vehicle.elevation) > 2.5) continue
+          const next = vehicleThreat(ped.x + ped.fox, ped.y + ped.foy, pvx, pvy, vehicle)
+          if (next && (!threat || next.time < threat.time)) threat = next
+        }
+        if (threat) {
+          const urgency = 1 - threat.time / 2
+          ped.fvx += threat.nx * (10 + urgency * 16) * dt
+          ped.fvy += threat.ny * (10 + urgency * 16) * dt
+          ped.flee = FLEE_TIME
         }
 
         if (ped.flee > 0 || ped.fox || ped.foy) {
@@ -1267,20 +1317,8 @@ export function createPedestrians(world, scene, signals) {
           pose.headYaw *= 0.85
         }
 
-        rootFrame(F.root, ped.x, groundAt(ped.x, ped.y) + hipHeight(pose, k), -ped.y,
-          facing + pelvisTwist, ped.lean + 0.12 * Math.max(0, ped.gait - 1),
-          0.022 * Math.cos(ped.phase))
-        drawFigure(i, ped, pose)
       }
 
-      if (eye) {
-        for (let i = 0; i < peds.length; i++) {
-          const q = peds[i]
-          const dx = q.x - eye.x, dy = q.y - eye.y
-          if (dx * dx + dy * dy < LENS_RADIUS * LENS_RADIUS) for (const m of parts) hide(m, i)
-        }
-      }
-      for (const m of parts) m.instanceMatrix.needsUpdate = true
       // Last, so the buckets hold this frame's positions. Traffic steps after the crowd does, so
       // what it strikes is where people actually are and not where they were a frame ago.
       rebuildHitGrid()

@@ -25,6 +25,7 @@ import {createPedestrians} from './game/pedestrians.js'
 import {createPolice} from './game/police.js'
 import {createTraffic} from './game/traffic.js'
 import {createSignals} from './game/signals.js'
+import {createVehicleBodies} from './game/vehicle-bodies.js'
 
 // Boot screen progress. The overlay lives in index.html so it is already on screen; all this does
 // is name the stage, because a dev-mode cold start spends ten-plus seconds between here and the
@@ -100,6 +101,7 @@ const crowd = createPedestrians(world, scene, signals)
 const police = createPolice(world, scene, makeCar, signals)
 world.signalState = signals          // published so the renderer can light the right lamp
 const traffic = createTraffic(world, scene, signals)
+const vehicleBodies = createVehicleBodies(car, traffic, police)
 const carVisual = createCarVisual(carMesh)
 const minimap = createMinimap(world)
 const bigmap = createBigMap(world)
@@ -285,9 +287,6 @@ function frame(now) {
   }
   lastSpeed = Math.abs(car.speed)
 
-  carMesh.position.set(car.x, groundAt(car.x, car.y), -car.y)
-  updateCarVisual(carVisual, car, dt)
-
   // Headlight intensity is the renderer's: it drives from sun elevation, and a second writer
   // here just fought it frame by frame. userData.headlight is read-only to this file.
 
@@ -301,19 +300,33 @@ function frame(now) {
     delivery.update(dt, car, bustedThisFrame)
     setBeacon(delivery.marker())
 
-    if (crowdsOn) crowd.update(dt, car, clock, chase.ready ? chase : null)
+    if (crowdsOn) crowd.update(dt, car, clock, chase.ready ? chase : null, vehicleBodies.update(crowdsOn))
     clock += dt
     // The crowd is passed in so traffic can knock people over. It updates BEFORE this call, so
     // the bucket grid traffic reads holds this frame's positions.
     if (crowdsOn) traffic.update(dt, car, clock, chase.ready ? chase : null, crowd)
     police.update(dt, car, crowdsOn ? crowd : EMPTY_CROWD, clock,
                   crowdsOn ? traffic : null, scene.userData.night ?? 0)
+    police.resolveContacts(car, crowdsOn ? traffic : null)
+    if (crowdsOn) {
+      traffic.collideWith(car)
+      crowd.resolveContacts(vehicleBodies.update(crowdsOn))
+    }
     audio.update(dt, car, police)
   }
   // Frozen: the simulation stops being ticked, so the audio must be told, or the engine hangs on
   // whatever note it was holding when the world stopped. Same for the map — a siren wailing over a
   // paused map is the kind of detail that reads as a bug.
   if (frozen) audio.silence()
+
+  // Publish positions only after contacts. Earlier draws left the car or fleet one frame
+  // behind collision corrections, making otherwise separated bodies visibly intersect.
+  carMesh.position.set(car.x, groundAt(car.x, car.y), -car.y)
+  updateCarVisual(carVisual, car, dt)
+  if (crowdsOn) {
+    traffic.render(chase.ready ? chase : null)
+    crowd.render(chase.ready ? chase : null)
+  }
 
   if (CAM_MODES[camMode] === 'bird') updateBird(bird, car, camera, dt)
   else updateChase(chase, car, camera, dt, world)

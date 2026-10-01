@@ -64,3 +64,70 @@ export function broadRadius(box, pad = 0) {
 
 /** A pedestrian is hit when their shoulder touches, not their centre line. */
 export const SHOULDER = 0.25
+
+/** Minimum translation moving A out of B. Headings and coordinates are in map space. */
+export function boxContact(ax, ay, ah, a, bx, by, bh, b, margin = 0) {
+  const dx = ax - bx, dy = ay - by
+  const reach = broadRadius(a) + broadRadius(b) + margin
+  if (dx * dx + dy * dy >= reach * reach) return null
+  const afx = Math.cos(ah), afy = Math.sin(ah), bfx = Math.cos(bh), bfy = Math.sin(bh)
+  let depth = Infinity, nx = 0, ny = 0
+  for (let i = 0; i < 4; i++) {
+    const x = i === 0 ? afx : i === 1 ? -afy : i === 2 ? bfx : -bfy
+    const y = i === 0 ? afy : i === 1 ? afx : i === 2 ? bfy : bfx
+    const ar = a.halfL * Math.abs(x * afx + y * afy) + a.halfW * Math.abs(-x * afy + y * afx)
+    const br = b.halfL * Math.abs(x * bfx + y * bfy) + b.halfW * Math.abs(-x * bfy + y * bfx)
+    const projection = dx * x + dy * y
+    const overlap = ar + br + margin - Math.abs(projection)
+    if (overlap <= 0) return null
+    if (overlap < depth) {
+      depth = overlap
+      const sign = projection < 0 ? -1 : 1
+      nx = x * sign; ny = y * sign
+    }
+  }
+  return {nx, ny, depth}
+}
+
+/** Minimum translation moving a pedestrian's shoulder circle out of a vehicle. */
+export function personContact(px, py, x, y, heading, box, radius = SHOULDER) {
+  const fx = Math.cos(heading), fy = Math.sin(heading)
+  const dx = px - x, dy = py - y
+  const along = dx * fx + dy * fy, across = -dx * fy + dy * fx
+  const qx = Math.max(-box.halfL, Math.min(box.halfL, along))
+  const qy = Math.max(-box.halfW, Math.min(box.halfW, across))
+  let nx = along - qx, ny = across - qy
+  const distance = Math.hypot(nx, ny)
+  let depth
+  if (distance > 0) {
+    if (distance >= radius) return null
+    nx /= distance; ny /= distance; depth = radius - distance
+  } else if (box.halfL - Math.abs(along) < box.halfW - Math.abs(across)) {
+    nx = along < 0 ? -1 : 1; ny = 0; depth = box.halfL - Math.abs(along) + radius
+  } else {
+    nx = 0; ny = across < 0 ? -1 : 1; depth = box.halfW - Math.abs(across) + radius
+  }
+  return {nx: nx * fx - ny * fy, ny: nx * fy + ny * fx, depth}
+}
+
+/** Predict a pedestrian entering a vehicle's swept corridor over the next seconds. */
+export function vehicleThreat(px, py, pvx, pvy, vehicle, horizon = 2) {
+  const {x, y, heading, box, vx, vy} = vehicle
+  const dx = px - x, dy = py - y
+  const reach = Math.hypot(vx - pvx, vy - pvy) * horizon + broadRadius(box, SHOULDER)
+  if (dx * dx + dy * dy > reach * reach) return null
+  const fx = Math.cos(heading), fy = Math.sin(heading)
+  const along = dx * fx + dy * fy, across = -dx * fy + dy * fx
+  const rvx = pvx - vx, rvy = pvy - vy
+  const av = rvx * fx + rvy * fy, sv = -rvx * fy + rvy * fx
+  let enter = 0, leave = horizon
+  for (const [p, v, extent] of [[along, av, box.halfL + SHOULDER + 0.4], [across, sv, box.halfW + SHOULDER + 0.4]]) {
+    if (Math.abs(v) < 1e-6) { if (Math.abs(p) > extent) return null; continue }
+    let a = (-extent - p) / v, b = (extent - p) / v
+    if (a > b) [a, b] = [b, a]
+    enter = Math.max(enter, a); leave = Math.min(leave, b)
+    if (enter > leave) return null
+  }
+  const side = across < 0 ? -1 : 1
+  return {time: enter, nx: -fy * side, ny: fx * side}
+}

@@ -114,7 +114,7 @@ Everything you can hit is in the collision grid: **59,708 obstacles**, of which 
 
 Hit one and the body is a rigid trunk resolved against the pavement at five contact points: the tumble, the bounce, the slide and the settle all come out of the contact impulses rather than being keyframed. At 20 km/h the body folds down beside the car and stops within three metres. At 90 it goes 2.4 metres into the air, eighteen metres down the road, bounces twice and comes to rest after twenty-one. Eighty people dying at once costs 25% more than the same crowd walking.
 
-People also get out of the way: a car over 7 m/s inside fifteen metres sends them running perpendicular to your line, away from the road rather than directly away from the car, because running straight away just keeps them in front of the bumper.
+Pedestrians now predict the swept path of every nearby vehicle, including buses and police, up to two seconds ahead. Parked and crawling vehicles remain solid: shoulder-circle contacts keep people out of their hulls even below the ragdoll threshold. Vehicle contacts use each body's oriented footprint, so a bus's sides and overhang count, and crossing traffic cannot pass through another lane's cars. All contact corrections are applied before the frame's vehicle and crowd matrices are published.
 
 ## The police
 

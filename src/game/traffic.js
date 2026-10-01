@@ -7,7 +7,7 @@
 // nobody watches a background car closely enough to notice it is on rails.
 
 import {makeCarFleet} from '../render/car.js'
-import {fleetBox} from './vehicles.js'
+import {fleetBox, VEHICLE_BOX, boxContact} from './vehicles.js'
 import {STOP_LINE, GREEN_LIGHT} from './signals.js'
 import {groundAt} from '../world/ground.js'
 
@@ -142,6 +142,7 @@ export function createTraffic(world, scene, signals) {
       dir: 1,                         // corrected immediately below, once the edge is known
       speed: CRUISE * (0.8 + rand() * 0.4),
       x: 0, y: 0, heading: 0, face: undefined, snapFace: false,
+      box: fleetBox(i),
     })
   }
   for (const car of cars) car.dir = legalDir(car.edge, rand() < 0.5 ? 1 : -1)
@@ -182,8 +183,7 @@ export function createTraffic(world, scene, signals) {
     }
   }
 
-  /** Metres. Player circle plus traffic circle; generous, since both are boxes pretending. */
-  const HIT = 3.5
+  for (const car of cars) place(car)
 
   /**
    * The player hitting traffic. Traffic is on rails, so being rammed cannot change the route it is
@@ -192,11 +192,20 @@ export function createTraffic(world, scene, signals) {
    * position, which is the failure that would have cars driving through walls afterwards.
    */
   function shunt(car, player) {
-    const dx = (car.x + car.ox) - player.x, dy = (car.y + car.oy) - player.y
-    const d = Math.hypot(dx, dy) || 0.0001
-    const nx = dx / d, ny = dy / d
-    const closing = (player.vx * nx + player.vy * ny) - 0
-    if (closing <= 0.5) return false
+    const hit = boxContact(car.x + car.ox, car.y + car.oy, car.face + car.spin, car.box,
+      player.x, player.y, player.heading, VEHICLE_BOX.car)
+    if (!hit) return false
+    const {nx, ny, depth} = hit
+    const trafficShare = car.box === VEHICLE_BOX.bus ? 0.25 : 0.5
+    car.ox += nx * (depth + 0.001) * trafficShare
+    car.oy += ny * (depth + 0.001) * trafficShare
+    player.x -= nx * (depth + 0.001) * (1 - trafficShare)
+    player.y -= ny * (depth + 0.001) * (1 - trafficShare)
+    const cvx = Math.cos(car.face) * (car.cruise ?? 0) + car.ovx
+    const cvy = Math.sin(car.face) * (car.cruise ?? 0) + car.ovy
+    const closing = (player.vx - cvx) * nx + (player.vy - cvy) * ny
+    player.contact = true
+    if (closing <= 0) return false
 
     const punch = Math.min(closing, 24)
     car.ovx += nx * punch * 0.55
@@ -207,15 +216,44 @@ export function createTraffic(world, scene, signals) {
     car.cruise = 0
 
     // The player pays for it too — less than a wall, because the other car moves.
-    const into = player.vx * nx + player.vy * ny
-    player.vx -= nx * into * 0.55
-    player.vy -= ny * into * 0.55
-    player.contact = true
-    return true
+    player.vx -= nx * closing * (1 - trafficShare)
+    player.vy -= ny * closing * (1 - trafficShare)
+    return closing > 0.5
+  }
+
+  function separateTraffic() {
+    // Headway is anticipation, not a contact solver: crossing roads and a bus's long
+    // overhang still need real hulls. Iterate contacts before publishing any fleet matrices.
+    for (let pass = 0; pass < 4; pass++) {
+      let contacts = 0
+      for (let i = 0; i < cars.length; i++) for (let j = i + 1; j < cars.length; j++) {
+        const a = cars[i], b = cars[j]
+        const hit = boxContact(a.x + a.ox, a.y + a.oy, a.face + a.spin, a.box,
+          b.x + b.ox, b.y + b.oy, b.face + b.spin, b.box, 0.02)
+        if (!hit) continue
+        contacts++
+        const push = (hit.depth + 0.001) / 2
+        a.ox += hit.nx * push; a.oy += hit.ny * push
+        b.ox -= hit.nx * push; b.oy -= hit.ny * push
+        if (Math.cos(a.face) * hit.nx + Math.sin(a.face) * hit.ny < 0) a.cruise = 0
+        if (Math.cos(b.face) * hit.nx + Math.sin(b.face) * hit.ny > 0) b.cruise = 0
+      }
+      if (!contacts) break
+    }
+  }
+
+  function render(eye) {
+    for (let i = 0; i < cars.length; i++) {
+      const car = cars[i]
+      const x = car.x + car.ox, y = car.y + car.oy
+      const hide = eye && (x - eye.x) ** 2 + (y - eye.y) ** 2 < LENS_RADIUS ** 2
+      fleet.setAt(i, hide ? 1e6 : x, hide ? 1e6 : -y, car.face + car.spin + Math.PI / 2, car.paint)
+    }
   }
 
   return {
     cars,
+    render,
     /** Debug lever: hide the fleet and stop it being drawn. Simulation keeps running either way. */
     setVisible(v) { fleet.group.visible = v },
     /**
@@ -238,10 +276,7 @@ export function createTraffic(world, scene, signals) {
     collideWith(mover) {
       let hits = 0
       for (const car of cars) {
-        const dx = (car.x + car.ox) - mover.x, dy = (car.y + car.oy) - mover.y
-        if (dx * dx + dy * dy < HIT * HIT) {
-          if (shunt(car, mover)) hits++
-        }
+        if (shunt(car, mover)) hits++
       }
       return hits
     },
@@ -276,7 +311,8 @@ export function createTraffic(world, scene, signals) {
         // far too early when crawling or far too late at cruise, and the second one is the
         // failure that looked like traffic not caring.
         const box = fleetBox(i)
-        const stopIn = Math.max(5, car.cruise * 0.7 + (car.cruise * car.cruise) / (2 * EMERGENCY_BRAKE))
+        const velocity = car.cruise ?? car.speed
+        const stopIn = box.halfL + Math.max(5, velocity * 0.7 + (velocity * velocity) / (2 * EMERGENCY_BRAKE))
         const personAhead = crowd
           ? crowd.pathAhead(car.x + car.ox, car.y + car.oy, car.face, box.halfW + 0.5, stopIn)
           : 0
@@ -370,7 +406,7 @@ export function createTraffic(world, scene, signals) {
           // car where it is — an unrecycled car far away costs nothing, whereas one conjured into
           // the road ahead costs a crash.
           const hx = Math.cos(player.heading), hy = Math.sin(player.heading)
-          const before = {edge: car.edge, t: car.t, dir: car.dir, x: car.x, y: car.y}
+          const before = {edge: car.edge, t: car.t, dir: car.dir, x: car.x, y: car.y, face: car.face, heading: car.heading}
           let placed = false
           for (let attempt = 0; attempt < 8 && !placed; attempt++) {
             const fresh = edgeNear(player.x, player.y, RESPAWN_MAX)
@@ -386,11 +422,17 @@ export function createTraffic(world, scene, signals) {
             const d = Math.hypot(rx, ry)
             if (d < RESPAWN_MIN || d > RESPAWN_MAX) continue
             const ahead = d > 0 ? (rx * hx + ry * hy) / d : 1
-            if (d >= RESPAWN_FAR || ahead <= BEHIND_DOT) placed = true
+            if (d >= RESPAWN_FAR || ahead <= BEHIND_DOT) {
+              placed = !cars.some(other => other !== car && boxContact(car.x, car.y, car.face, car.box,
+                other.x + other.ox, other.y + other.oy, other.face + other.spin, other.box, 2))
+            }
           }
           if (!placed) {
             car.edge = before.edge; car.t = before.t; car.dir = before.dir
             car.x = before.x; car.y = before.y
+            car.face = before.face; car.heading = before.heading; car.snapFace = false
+          } else {
+            car.ox = car.oy = car.ovx = car.ovy = car.spin = car.spinRate = 0
           }
         }
 
@@ -425,10 +467,7 @@ export function createTraffic(world, scene, signals) {
           if (Math.abs(car.ox) < 0.01 && Math.abs(car.oy) < 0.01) { car.ox = 0; car.oy = 0 }
         }
 
-        const pdx2 = (car.x + car.ox) - player.x, pdy2 = (car.y + car.oy) - player.y
-        if (pdx2 * pdx2 + pdy2 * pdy2 < HIT * HIT) {
-          if (shunt(car, player)) this.lastImpacts++
-        }
+        if (shunt(car, player)) this.lastImpacts++
 
         // Knock over anybody under this vehicle. Until now the player was the only thing in the
         // city that could touch a person, so buses drove through crowds and nobody flinched —
@@ -446,17 +485,8 @@ export function createTraffic(world, scene, signals) {
             car.cruise, box)
         }
 
-        // A car inside the camera is a wall of paint across the screen; drop it far below the
-        // world for the frame instead. The fleet API has no hide, and a stale matrix would leave
-        // it parked in mid-air where it was last drawn.
-        const ex = eye ? (car.x + car.ox) - eye.x : 999
-        const ey = eye ? (car.y + car.oy) - eye.y : 999
-        if (eye && ex * ex + ey * ey < LENS_RADIUS * LENS_RADIUS) {
-          fleet.setAt(i, 1e6, 1e6, 0, car.paint)
-        } else {
-          fleet.setAt(i, car.x + car.ox, -(car.y + car.oy), car.face + car.spin + Math.PI / 2, car.paint)
-        }
       }
+      separateTraffic()
     },
   }
 }
