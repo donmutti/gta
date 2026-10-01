@@ -9,7 +9,7 @@
 import {makeCarFleet} from '../render/car.js'
 import {fleetBox, VEHICLE_BOX, boxContact} from './vehicles.js'
 import {STOP_LINE, GREEN_LIGHT} from './signals.js'
-import {groundAt} from '../world/ground.js'
+import {createLanePath, createJunctionPath, samplePath} from './traffic-path.js'
 
 const COUNT = 120
 const CRUISE = 9.5              // m/s, about 34 km/h — city pace
@@ -29,30 +29,6 @@ const RESPAWN_MAX = 210
 const BEHIND_DOT = -0.25        // and "behind" means properly behind, not just off to the side
 /** Slow down when the car ahead on the same road is close. Stops them driving through each other. */
 const HEADWAY = 12
-/**
- * Metres of lateral step at a junction beyond which the corner is eased rather than jumped.
- *
- * Below this it is a polyline vertex and nobody sees it; above it, it is the lane of one road
- * meeting the lane of another, and it reads as a car teleporting sideways.
- */
-const CORNER_STEP = 0.5
-/** And beyond this it is not a corner at all but a car being moved, which is never smoothed. */
-const CORNER_MAX = 12
-/**
- * How fast a car may change the direction it POINTS, in radians per second.
- *
- * The heading used to be snapped to whatever path segment the car was on, so it changed instantly
- * at every junction and at every vertex of a bendy road. That is the "cars turn too sharply"
- * complaint exactly, and the honest description is that nothing was turning at all — the heading
- * was being assigned rather than reached.
- *
- * The cap scales with SPEED, because that is what a vehicle with a wheelbase does: a bicycle
- * model's yaw rate is v/R, with R the tightest radius a city car takes a junction at. The floor
- * keeps a crawling car able to finish a turn it has started, which a strict v/R would not.
- */
-const TURN_RADIUS = 7
-const YAW_MIN = 1.1
-
 /**
  * Metres per second per second, when the thing ahead is a person.
  *
@@ -132,6 +108,7 @@ export function createTraffic(world, scene, signals) {
       paint: (rand() * paletteSize) | 0,
       // Seconds left of pulling over for a siren.
       yielding: 0,
+      pullOver: 0,
       // Which half of a one-way street this car uses. Ignored on two-way roads, where the
       // direction of travel decides the side.
       lane: rand() < 0.5 ? 1 : -1,
@@ -148,38 +125,67 @@ export function createTraffic(world, scene, signals) {
   for (const car of cars) car.dir = legalDir(car.edge, rand() < 0.5 ? 1 : -1)
   scene.add(fleet.group)
 
+  const lanePaths = new Map()
+  function pathFor(car, edge = car.edge, dir = car.dir) {
+    const radius = car.box === VEHICLE_BOX.bus ? 12 : 7
+    const key = `${edge.id}:${dir}:${edge.oneway ? car.lane : 1}:${radius}`
+    if (!lanePaths.has(key)) lanePaths.set(key, createLanePath(edge, dir, car.lane, radius))
+    return lanePaths.get(key)
+  }
+
   function place(car) {
-    const pts = car.edge.pts
-    const target = car.t * car.edge.length
-    let run = 0
-    for (let i = 1; i < pts.length; i++) {
-      const [ax, ay] = pts[i - 1], [bx, by] = pts[i]
-      const seg = Math.hypot(bx - ax, by - ay)
-      if (run + seg >= target || i === pts.length - 1) {
-        const f = seg > 0 ? Math.min(1, (target - run) / seg) : 0
-        const dx = seg > 0 ? (bx - ax) / seg : 1
-        const dy = seg > 0 ? (by - ay) / seg : 0
-        // Drive on the right, like Luxembourg: a quarter of the width off the centreline puts the
-        // car in the middle of its lane, for any road width.
-        //
-        // A ONE-WAY street is different: every car on it travels the same way, so both halves are
-        // legal lanes. Keying the offset off direction alone left all 572 one-way streets with
-        // traffic hugging one side and the other half permanently empty — correct, and obviously
-        // wrong to look at. Each car picks a side instead and keeps it.
-        const side = car.edge.oneway ? car.lane : car.dir
-        // Pulling over: out of the lane centre and most of the way to the kerb.
-        const laneFrac = car.yielding > 0 ? 0.40 : 0.25
-        const off = side * car.edge.width * laneFrac
-        car.x = ax + dx * (f * seg) + dy * off
-        car.y = ay + dy * (f * seg) - dx * off
-        car.heading = Math.atan2(dy * car.dir, dx * car.dir)
-        // A car being created or recycled points down its road immediately. Easing into it would
-        // have a freshly placed car visibly swing round to face its own lane, which is the sort of
-        // thing that only happens far away where nobody was supposed to be looking.
-        if (car.face === undefined || car.snapFace) { car.face = car.heading; car.snapFace = false }
-        return
+    const path = car.junction?.active ? car.junction.path : pathFor(car)
+    const distance = car.junction?.active ? car.junction.distance : (car.dir > 0 ? car.t : 1 - car.t) * path.length
+    const pose = samplePath(path, distance)
+    car.x = pose.x + Math.sin(pose.heading) * car.pullOver
+    car.y = pose.y - Math.cos(pose.heading) * car.pullOver
+    car.heading = car.face = pose.heading
+    car.snapFace = false
+  }
+
+  function planJunction(car) {
+    if (car.junction) return
+    const node = car.dir > 0 ? car.edge.b : car.edge.a
+    let options = (world.nodes[node]?.edges ?? []).map(id => world.edges[id])
+      .filter(edge => edge.width >= 6 && !edge.pedestrianZone && enterable(edge, node))
+    // Returning along the incoming edge is a dead-end manoeuvre, not a random choice at
+    // every crossroads. The old choice frequently asked buses to reverse direction in place.
+    const onward = options.filter(edge => edge !== car.edge)
+    if (onward.length) options = onward
+    if (!options.length) return
+    const edge = options[(rand() * options.length) | 0]
+    const dir = legalDir(edge, edge.a === node ? 1 : -1)
+    const path = createJunctionPath(pathFor(car), pathFor(car, edge, dir), car.box === VEHICLE_BOX.bus ? 12 : 7)
+    car.junction = {edge, dir, path, active: false, distance: 0}
+  }
+
+  function advanceRoute(car, distance) {
+    const beforeOffset = car.pullOver
+    const desiredOffset = car.yielding > 0 ? car.edge.width * 0.15 : 0
+    car.pullOver += Math.max(-distance * 0.08, Math.min(distance * 0.08, desiredOffset - car.pullOver))
+    const path = pathFor(car), junction = car.junction
+    if (junction?.active) {
+      junction.distance += distance
+    } else {
+      const next = (car.dir > 0 ? car.t : 1 - car.t) * path.length + distance
+      if (junction && next >= junction.path.start) {
+        junction.active = true
+        junction.distance = next - junction.path.start
+      } else {
+        const fraction = Math.min(1, next / path.length)
+        car.t = car.dir > 0 ? fraction : 1 - fraction
       }
-      run += seg
+    }
+    if (junction?.active && junction.distance >= junction.path.length) {
+      car.edge = junction.edge; car.dir = junction.dir
+      const fraction = Math.min(1, (junction.path.end + junction.distance - junction.path.length) / pathFor(car).length)
+      car.t = car.dir > 0 ? fraction : 1 - fraction
+      car.junction = null
+    }
+    place(car)
+    if (distance > 0.001) {
+      car.face -= Math.atan2(car.pullOver - beforeOffset, distance)
+      car.heading = car.face
     }
   }
 
@@ -286,6 +292,7 @@ export function createTraffic(world, scene, signals) {
       this.lastImpacts = 0
       for (let i = 0; i < cars.length; i++) {
         const car = cars[i]
+        planJunction(car)
 
         // Keep a gap from whoever is ahead on the same road and going the same way.
         let blocked = false
@@ -322,7 +329,7 @@ export function createTraffic(world, scene, signals) {
         // is treated as committed and goes through on amber, exactly as a driver would.
         const targetNode = car.dir > 0 ? car.edge.b : car.edge.a
         const sig = signals?.ahead(car.edge, car.dir, clock, car.x, car.y)
-        if (sig && sig.light !== GREEN_LIGHT) {
+        if (!car.junction?.active && sig && sig.light !== GREEN_LIGHT) {
           const toStopLine = sig.dist - STOP_LINE
           const committed = toStopLine < 3.5
           if (!committed && toStopLine < Math.max(6, (car.cruise ?? car.speed) * 2.2)) blocked = true
@@ -331,7 +338,7 @@ export function createTraffic(world, scene, signals) {
         // Unsignalled junctions: yield to whoever is closer to the box. Not a full right-of-way
         // model — it is the rule that stops two cars arriving at the same crossroads together,
         // which is the only failure anyone actually sees.
-        if (!blocked && !signals?.junctions.has(targetNode)) {
+        if (!blocked && !car.junction?.active && !signals?.junctions.has(targetNode)) {
           const node = world.nodes[targetNode]
           if (node) {
             const myGap = Math.hypot(node.x - car.x, node.y - car.y)
@@ -349,7 +356,13 @@ export function createTraffic(world, scene, signals) {
         }
 
         if (car.yielding > 0) car.yielding -= dt
-        const want = (blocked || panic) ? 0 : (car.yielding > 0 ? car.speed * 0.28 : car.speed)
+        const path = car.junction?.active ? car.junction.path : pathFor(car)
+        const distance = car.junction?.active ? car.junction.distance : (car.dir > 0 ? car.t : 1 - car.t) * path.length
+        const aheadPose = samplePath(path, distance + Math.max(3, car.cruise ?? car.speed))
+        const bend = Math.abs(Math.atan2(Math.sin(aheadPose.heading - car.heading), Math.cos(aheadPose.heading - car.heading)))
+        const entering = car.junction && !car.junction.active && car.junction.path.start - distance < 12
+        const cornerSpeed = car.junction?.active || entering || bend > 0.2 ? (car.box === VEHICLE_BOX.bus ? 4.5 : 6) : car.speed
+        const want = (blocked || panic) ? 0 : Math.min(cornerSpeed, car.yielding > 0 ? car.speed * 0.28 : car.speed)
         // A driver LIFTS OFF for a red light and STANDS ON THE PEDAL for a person, and the
         // difference between those two is the whole point of this line. The old single rate eased
         // toward the target over most of a second, which is fine for a signal you saw coming and
@@ -359,45 +372,7 @@ export function createTraffic(world, scene, signals) {
           ? Math.max(0, now - EMERGENCY_BRAKE * dt)
           : now + (want - now) * Math.min(1, 2.5 * dt)
 
-        car.t += (car.dir * car.cruise * dt) / car.edge.length
-        // Only a genuine edge change may be smoothed, and this is why the position is captured
-        // HERE rather than around the placement: every other way a car's position can change is a
-        // deliberate jump that must not be eased.
-        let cornerFrom = null
-        if (car.t > 1 || car.t < 0) {
-          cornerFrom = [car.x, car.y]
-          const nodeId = car.t > 1 ? car.edge.b : car.edge.a
-          const options = (world.nodes[nodeId]?.edges ?? []).filter(id => {
-            const e = world.edges[id]
-            return e.width >= 6 && !e.pedestrianZone && enterable(e, nodeId)
-          })
-          const next = options.length ? world.edges[options[(rand() * options.length) | 0]] : car.edge
-          car.edge = next
-          const enteredAtA = next.a === nodeId
-          car.t = enteredAtA ? 0.001 : 0.999
-          car.dir = legalDir(next, enteredAtA ? 1 : -1)
-        }
-        // WHERE IT WAS, before the new edge moves it. Both edges meet at the node so the
-        // centreline is continuous, but the LANE is not: a car sits a quarter of the road's width
-        // off the centreline, and the two roads at a junction have different widths and different
-        // directions, so the lane of one is metres from the lane of the other. Measured: half of
-        // the single-frame car jumps over 4m happened on an edge change, all of them almost
-        // exactly 6m, which is a junction about the width of a bus.
-        place(car)
-        if (cornerFrom) {
-          // Carry the lane discontinuity as a decaying offset rather than paying it in one frame.
-          // The shunt machinery below already applies and decays exactly this, so a corner borrows
-          // the mechanism that exists for being rammed: the car slides round rather than jumping.
-          const stepX = car.x - cornerFrom[0], stepY = car.y - cornerFrom[1]
-          const d = Math.hypot(stepX, stepY)
-          // The UPPER bound is not tidiness, it is the whole safety of this. A step this large is
-          // not a corner, it is a car being put somewhere else, and smoothing a teleport feeds a
-          // kilometre into an offset that then decays over minutes. Found exactly that way: a car
-          // is created at the origin and placed on its road on its first frame, which fed 1,544
-          // metres into ox and left the fleet drifting through the city from a quarter of a
-          // million metres out. A jump is a jump and must be allowed to happen at once.
-          if (d > CORNER_STEP && d < CORNER_MAX) { car.ox -= stepX; car.oy -= stepY }
-        }
+        advanceRoute(car, car.cruise * dt)
 
         const ddx = car.x - player.x, ddy = car.y - player.y
         if (ddx * ddx + ddy * ddy > RECYCLE_AT * RECYCLE_AT) {
@@ -406,12 +381,13 @@ export function createTraffic(world, scene, signals) {
           // car where it is — an unrecycled car far away costs nothing, whereas one conjured into
           // the road ahead costs a crash.
           const hx = Math.cos(player.heading), hy = Math.sin(player.heading)
-          const before = {edge: car.edge, t: car.t, dir: car.dir, x: car.x, y: car.y, face: car.face, heading: car.heading}
+          const before = {edge: car.edge, t: car.t, dir: car.dir, x: car.x, y: car.y, face: car.face, heading: car.heading, junction: car.junction}
           let placed = false
           for (let attempt = 0; attempt < 8 && !placed; attempt++) {
             const fresh = edgeNear(player.x, player.y, RESPAWN_MAX)
             if (!fresh) break
             car.edge = fresh
+            car.junction = null
             car.t = rand()
             car.dir = legalDir(fresh, rand() < 0.5 ? 1 : -1)
             // A recycled car is somewhere else entirely, out of sight, so it points down its new
@@ -430,25 +406,12 @@ export function createTraffic(world, scene, signals) {
           if (!placed) {
             car.edge = before.edge; car.t = before.t; car.dir = before.dir
             car.x = before.x; car.y = before.y
-            car.face = before.face; car.heading = before.heading; car.snapFace = false
+            car.face = before.face; car.heading = before.heading; car.snapFace = false; car.junction = before.junction
           } else {
             car.ox = car.oy = car.ovx = car.ovy = car.spin = car.spinRate = 0
+            car.pullOver = 0
           }
         }
-
-        // The direction the car POINTS, as distinct from the direction the road runs. The second is
-        // a fact about the map; the first is a fact about a vehicle with a wheelbase, and using
-        // the map's answer for both is what made every junction a hinge.
-        const yawCap = Math.max(YAW_MIN, Math.abs(car.cruise) / TURN_RADIUS)
-        let turn = car.heading - car.face
-        while (turn > Math.PI) turn -= Math.PI * 2
-        while (turn < -Math.PI) turn += Math.PI * 2
-        const step = yawCap * dt
-        car.face += turn > step ? step : (turn < -step ? -step : turn)
-        // Wrapped, so a car that has driven in circles for an hour does not carry a facing of
-        // several hundred radians. Harmless to the trigonometry and confusing in every readout.
-        if (car.face > Math.PI) car.face -= Math.PI * 2
-        else if (car.face < -Math.PI) car.face += Math.PI * 2
 
         // Apply and decay any shunt, then draw where the car actually ended up.
         if (car.ovx || car.ovy || car.ox || car.oy || car.spinRate || car.spin) {

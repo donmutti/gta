@@ -134,6 +134,8 @@ The phase is *computed* from the clock and an offset derived from the junction's
 
 Traffic obeys the lights, keeps headway, drives on the right, respects one-way streets, yields at unsignalled junctions to whoever reached the box first, and brakes for you. A car too close to stop safely goes through on amber, as a driver would. It pulls over for a passing police car and holds that for a couple of seconds after the siren has gone, because a car that snaps back into lane the instant the cop is level reads as scripted.
 
+Traffic follows distance-measured curved lane paths. The body's heading is the tangent of the same path that moves it, including the connector between two streets; it no longer slides through a corner while independently rotating toward the next road. Buses take wider, slower turns. A vehicle only chooses to turn back along its incoming road when there is no onward route.
+
 ## The edge of the world
 
 The slice has to end somewhere, and an invisible wall is the worst way to say so — the player feels a rule rather than a place. Luxembourg is surrounded by woodland, so the map ends in trees: 33,665 of them on a 3.6-metre grid with jitter. The pitch is what makes it a wall rather than a suggestion — the gap has to be narrower than the car. Sixteen escape attempts at full throttle, one every 22 degrees, get nobody out.
